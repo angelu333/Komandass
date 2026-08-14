@@ -35,6 +35,8 @@ def signup(email: str, password: str):
         msg = str(e)
         if "already" in msg.lower() or "registered" in msg.lower():
             raise HTTPException(400, "Ese email ya está registrado")
+        if "rate limit" in msg.lower():
+            raise HTTPException(429, "Demasiados intentos. Espera unos minutos e inténtalo de nuevo")
         raise HTTPException(400, f"No se pudo crear la cuenta: {msg[:120]}")
     confirma_email(getattr(user, "id", None))
     if session is None:
