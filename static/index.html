@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Comandas · Sistema multinegocio</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/icons/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<div id="auth-screen" class="screen">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="auth-brand-icon" id="auth-brand-icon"></div>
+      <div class="auth-brand-text"><strong>Comandas</strong><span>Sistema multinegocio</span></div>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-mode="login">Iniciar sesión</button>
+      <button class="auth-tab" data-mode="register">Registrarse</button>
+    </div>
+    <form id="auth-form" autocomplete="on">
+      <div class="field"><label>Correo electrónico</label>
+        <input id="auth-email" type="email" placeholder="tu@correo.com" autocomplete="email">
+      </div>
+      <div class="field"><label>Contraseña</label>
+        <input id="auth-password" type="password" placeholder="Mínimo 6 caracteres" autocomplete="current-password">
+      </div>
+      <div id="auth-error" class="auth-error hidden"></div>
+      <button class="btn btn-primary btn-block btn-lg" type="submit" id="auth-submit">Entrar</button>
+    </form>
+  </div>
+</div>
+
+<div id="onboarding-screen" class="screen hidden">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="auth-brand-icon">🎉</div>
+      <div class="auth-brand-text"><strong>¡Bienvenido!</strong><span>Registra tu negocio para empezar</span></div>
+    </div>
+    <form id="onboarding-form" autocomplete="on">
+      <div class="field"><label>Nombre del negocio *</label>
+        <input id="on-nombre" placeholder="Ej: Taquería Don Memo">
+      </div>
+      <div class="field"><label>Teléfono</label>
+        <input id="on-telefono" placeholder="612 ••• ••••">
+      </div>
+      <div class="field"><label>Dirección</label>
+        <input id="on-direccion" placeholder="Calle, número, colonia">
+      </div>
+      <div id="on-error" class="auth-error hidden"></div>
+      <button class="btn btn-primary btn-block btn-lg" type="submit" id="on-submit">Crear mi negocio</button>
+    </form>
+  </div>
+</div>
+
+<div id="offline-banner" class="offline-banner hidden">
+  <span id="offline-text">Sin conexión — tus cambios se guardarán y se enviarán al reconectar</span>
+</div>
+<div id="app" class="hidden">
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="brand-icon" id="brand-icon"></div>
+      <div class="brand-text"><strong id="brand-name">Comandas</strong><span id="brand-sub">Cargando…</span></div>
+    </div>
+    <nav id="nav">
+      <button class="nav-btn active" data-tab="pedir"><span data-icon="cart"></span>Tomar pedido</button>
+      <button class="nav-btn" data-tab="cocina"><span data-icon="fire"></span>Cocina <span id="badge-cocina" class="badge hidden">0</span></button>
+      <button class="nav-btn" data-tab="historial"><span data-icon="clipboard"></span>Historial</button>
+      <button class="nav-btn" data-tab="menu"><span data-icon="menu"></span>Catálogo</button>
+      <button class="nav-btn" data-tab="ingredientes"><span data-icon="box"></span>Ingredientes</button>
+      <button class="nav-btn" data-tab="clientes"><span data-icon="people"></span>Clientes</button>
+      <button class="nav-btn" data-tab="reportes"><span data-icon="chart"></span>Reportes</button>
+    </nav>
+    <div class="side-foot">
+      <div class="clock" id="clock">--:--</div>
+      <button class="btn ghost sm" id="btn-config"><span data-icon="motor"></span>Configuración</button>
+      <button class="btn ghost sm" id="btn-logout"><span data-icon="close"></span>Cerrar sesión</button>
+    </div>
+  </aside>
+  <main id="main">
+    <section id="view-pedir" class="view active"></section>
+    <section id="view-cocina" class="view"></section>
+    <section id="view-historial" class="view"></section>
+    <section id="view-menu" class="view"></section>
+    <section id="view-ingredientes" class="view"></section>
+    <section id="view-clientes" class="view"></section>
+    <section id="view-reportes" class="view"></section>
+  </main>
+</div>
+<div id="modal-root"></div>
+<div id="toasts"></div>
+<script src="/static/icons.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
