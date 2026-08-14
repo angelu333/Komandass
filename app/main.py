@@ -1,4 +1,3 @@
-import socket
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -23,15 +22,3 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
-
-
-@app.get("/api/ip")
-def get_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return {"ip": ip}
-    except Exception:
-        return {"ip": "127.0.0.1"}
