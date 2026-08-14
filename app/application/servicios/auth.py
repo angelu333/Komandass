@@ -37,6 +37,11 @@ def signup(email: str, password: str):
             raise HTTPException(400, "Ese email ya está registrado")
         raise HTTPException(400, f"No se pudo crear la cuenta: {msg[:120]}")
     confirma_email(getattr(user, "id", None))
+    if session is None:
+        try:
+            user, session = repo.auth_login(email, password)
+        except Exception:
+            pass
     return _payload(user, session)
 
 
