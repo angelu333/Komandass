@@ -36,6 +36,10 @@ function recuperarSesionConfirmada() {
 }
 recuperarSesionConfirmada();
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+
 /* ============ OFFLINE (cola + banner) ============ */
 const COLA_KEY = "cola_offline";
 const leerCola = () => { try { return JSON.parse(localStorage.getItem(COLA_KEY) || "[]"); } catch (e) { return []; } };
@@ -72,7 +76,8 @@ async function flushCola() {
         if (typeof acc.callback === "function") acc.callback(r);
       } else if (acc.tipo === "estado") {
         const ref = tempMap[acc.ref] || acc.ref;
-        await api(`/pedidos/${ref}/estado?estado=${acc.nuevo}`, "POST", {});
+        const repartidor = acc.repartidor ? `&repartidor=${encodeURIComponent(acc.repartidor)}` : "";
+        await api(`/pedidos/${ref}/estado?estado=${acc.nuevo}${repartidor}`, "POST", {});
       } else if (acc.tipo === "cancelar") {
         const ref = tempMap[acc.ref] || acc.ref;
         await api(`/pedidos/${ref}/cancelar?motivo=${encodeURIComponent(acc.motivo || "")}`, "POST", {});
@@ -1044,7 +1049,7 @@ function abrirModalConfirmar() {
         <div class="seg-row">
           ${["salon", "llevar", "domicilio"].map(t => `
             <button class="seg ${state.pedido.tipo === t ? "selected" : ""}" data-t="${t}">
-              ${icon(t === "salon" ? "store" : t === "llevar" ? "home" : "home")}${t === "salon" ? "En salón" : t === "llevar" ? "Para llevar" : "A domicilio"}
+              ${icon(t === "salon" ? "store" : t === "llevar" ? "home" : "home")}${t === "salon" ? "En salón" : t === "llevar" ? "Para recoger" : "A domicilio"}
             </button>`).join("")}
         </div>
       </div>
@@ -1164,9 +1169,9 @@ async function loadCocina() {
 }
 function renderCocina() {
   const v = $("#view-cocina");
-  const counts = { recibido: 0, preparacion: 0, entregado: 0 };
+  const counts = { recibido: 0, preparacion: 0, listo: 0, en_camino: 0, entregado: 0 };
   cocinaData.forEach(p => { if (counts[p.estado] !== undefined) counts[p.estado]++; });
-  const orden = { recibido: 0, preparacion: 1, entregado: 2 };
+  const orden = { recibido: 0, preparacion: 1, listo: 2, en_camino: 3, entregado: 4 };
   const items = [...cocinaData].sort((a, b) => orden[a.estado] - orden[b.estado] || b.id - a.id);
   v.innerHTML = `
     <div class="view-header">
@@ -1189,7 +1194,7 @@ function renderCocina() {
 function tarjetaComanda(p) {
   const edad = p.edad_local;
   const clase = edad > state.umbralMin * 60 ? "crit" : edad > state.umbralWarn * 60 ? "warn" : "ok";
-  const tipoTxt = { salon: "En salón", llevar: "Para llevar", domicilio: "A domicilio" }[p.tipo] || p.tipo;
+  const tipoTxt = { salon: "En salón", llevar: "Para recoger", domicilio: "A domicilio" }[p.tipo] || p.tipo;
   return `
     <div class="order-card ${clase} ${p.estado === "entregado" ? "entregado" : ""}" data-id="${p.id}">
       <div class="order-head">
@@ -1199,6 +1204,7 @@ function tarjetaComanda(p) {
             ${p.mesa ? `<span class="table-chip">${icon("store")}Mesa ${esc(p.mesa)}</span>` : ""}
             ${esc(tipoTxt)} · ${esc(p.cliente_nombre)}${p.direccion ? " · " + icon("home") + esc(p.direccion) : ""}
           </div>
+          ${p.repartidor_nombre ? `<div class="order-meta">${icon("people")} Repartidor: <strong>${esc(p.repartidor_nombre)}</strong></div>` : ""}
           ${p.nota ? `<div class="order-meta" style="color:var(--rojo)">${icon("edit")} ${esc(p.nota)}</div>` : ""}
         </div>
         <div class="timer-wrap">
@@ -1223,13 +1229,17 @@ function tarjetaComanda(p) {
     </div>`;
 }
 function estadoTxt(e) {
-  const m = { recibido: "Recibido", preparacion: "En preparación", entregado: "Entregado", cancelado: "Cancelado" };
+  const m = { recibido: "Recibido", preparacion: "En preparación", listo: "Listo", en_camino: "En camino", entregado: "Entregado", cancelado: "Cancelado" };
   return m[e] || e;
 }
 function accionesEstado(p) {
   const ids = {
-    recibido: [["preparacion", "Iniciar", "btn-blue"], ["cancelado", "Cancelar", "btn-ghost"]],
-    preparacion: [["entregado", "Entregar", "btn-green"], ["cancelado", "Cancelar", "btn-ghost"]],
+    recibido: [["preparacion", "Iniciar preparación", "btn-blue"], ["cancelado", "Cancelar", "btn-ghost"]],
+    preparacion: [["listo", "Marcar listo", "btn-green"], ["cancelado", "Cancelar", "btn-ghost"]],
+    listo: p.tipo === "domicilio"
+      ? [["en_camino", "Asignar y enviar", "btn-blue"], ["cancelado", "Cancelar", "btn-ghost"]]
+      : [["entregado", p.tipo === "salon" ? "Entregar en mesa" : "Entregar al cliente", "btn-green"], ["cancelado", "Cancelar", "btn-ghost"]],
+    en_camino: [["entregado", "Confirmar entrega", "btn-green"], ["cancelado", "Cancelar", "btn-ghost"]],
     entregado: [],
     cancelado: [],
   }[p.estado] || [];
@@ -1239,12 +1249,18 @@ function accionesEstado(p) {
 function bindTarjetas() {
   $$("[data-est]").forEach(b => b.onclick = async () => {
     const pid = b.dataset.est, nuevo = b.dataset.nuevo;
+    const pedido = cocinaData.find(p => p.id == pid);
+    if (nuevo === "en_camino") return abrirModalRepartidor(pedido);
+    await cambiarEstadoCocina(pid, nuevo);
+  });
+}
+async function cambiarEstadoCocina(pid, nuevo, repartidor = "") {
     if (!state.online) {
       if (nuevo === "cancelado") {
         const motivo = prompt("Motivo de cancelación (opcional):") ?? "";
         encolarAccion({ tipo: "cancelar", ref: pid, motivo });
       } else {
-        encolarAccion({ tipo: "estado", ref: pid, nuevo });
+        encolarAccion({ tipo: "estado", ref: pid, nuevo, repartidor });
         if (nuevo === "entregado") beep(990, 0.18);
       }
       await loadCocina(); renderCocina(); updateBadge();
@@ -1256,12 +1272,35 @@ function bindTarjetas() {
         const motivo = prompt("Motivo de cancelación (opcional):") ?? "";
         await api(`/pedidos/${pid}/cancelar?motivo=${encodeURIComponent(motivo)}`, "POST", {});
       } else {
-        await api(`/pedidos/${pid}/estado?estado=${nuevo}`, "POST", {});
+        const ruta = `/pedidos/${pid}/estado?estado=${nuevo}${repartidor ? `&repartidor=${encodeURIComponent(repartidor)}` : ""}`;
+        await api(ruta, "POST", {});
         if (nuevo === "entregado") { beep(990, 0.18); }
       }
       await loadCocina(); renderCocina(); updateBadge();
     } catch (e) { toast("Error: " + e.message, "error"); }
-  });
+}
+
+function abrirModalRepartidor(pedido) {
+  if (!pedido) return;
+  const modal = document.createElement("div");
+  modal.className = "modal-backdrop";
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">${icon("people")}<h3>Asignar repartidor</h3><button class="modal-close" id="rep-close">${icon("close")}</button></div>
+      <div class="delivery-summary"><strong>${esc(pedido.folio)} · ${money(pedido.total)}</strong><span>${esc(pedido.cliente_nombre)} · ${esc(pedido.direccion || "Sin dirección")}</span></div>
+      <div class="field"><label>Nombre del repartidor *</label><input id="rep-nombre" autocomplete="off" placeholder="Ej: Juan Pérez"></div>
+      <div class="field"><label>Forma de pago</label><div class="pizza-help">${esc(pedido.metodo_pago || "No definida")} · el efectivo se verá como monto por rendir en Reportes.</div></div>
+      <div class="modal-foot"><button class="btn ghost" id="rep-cancel">Cancelar</button><button class="btn btn-primary" id="rep-send">${icon("arrowRight")}Enviar pedido</button></div>
+    </div>`;
+  $("#modal-root").appendChild(modal);
+  $("#rep-close", modal).onclick = $("#rep-cancel", modal).onclick = () => modal.remove();
+  $("#rep-send", modal).onclick = async () => {
+    const nombre = $("#rep-nombre", modal).value.trim();
+    if (!nombre) return toast("Escribe el nombre del repartidor", "warn");
+    await cambiarEstadoCocina(pedido.id, "en_camino", nombre);
+    modal.remove();
+  };
+  $("#rep-nombre", modal).focus();
 }
 
 // LOOP principal de contadores: cada 1s actualiza los timer en pantalla (solo cocina visible)
@@ -2116,11 +2155,26 @@ async function loadReportes(dias = 30) {
           <div id="grafica">${svgGrafica(rango.datos)}</div>
         </div>
       </div>
+      <div class="card" style="margin-bottom:18px">
+        <div class="modal-head"><h3>${icon("people")} Repartidores de hoy</h3></div>
+        ${dia.repartidores?.length ? `
+          <div class="table-wrap" style="box-shadow:none">
+            <table class="data">
+              <thead><tr><th>Repartidor</th><th>Asignados</th><th>En camino</th><th>Entregados</th><th>Por cobrar</th><th>Efectivo por rendir</th></tr></thead>
+              <tbody>${dia.repartidores.map(r => `<tr>
+                <td style="font-weight:800">${esc(r.nombre)}</td><td>${r.asignados}</td><td>${r.en_camino}</td><td>${r.entregados}</td>
+                <td class="money">${money(r.pendiente_por_cobrar)}</td><td class="money" style="color:var(--rojo)">${money(r.efectivo_por_rendir)}</td>
+              </tr>`).join("")}</tbody>
+            </table>
+          </div>
+          <div class="pizza-help" style="margin-top:10px">“Por cobrar” es efectivo de pedidos que siguen en camino. “Efectivo por rendir” corresponde a domicilios en efectivo ya entregados.</div>` :
+          `<div style="color:var(--gris-400);font-size:13px;padding:8px 0">Aún no se han asignado pedidos a repartidores hoy.</div>`}
+      </div>
       <div class="card">
         <div class="modal-head"><h3>Comandas de hoy</h3><button class="btn btn-sm btn-ghost" id="imprimir-dia">${icon("print")}Imprimir</button></div>
         <div class="table-wrap">
           <table class="data">
-            <thead><tr><th>Folio</th><th>Hora</th><th>Cliente</th><th>Tipo</th><th>Estado</th><th>Método</th><th>Total</th></tr></thead>
+            <thead><tr><th>Folio</th><th>Hora</th><th>Cliente</th><th>Tipo</th><th>Repartidor</th><th>Estado</th><th>Método</th><th>Total</th></tr></thead>
             <tbody>
               ${dia.lista.map(p => `
                 <tr>
@@ -2128,10 +2182,11 @@ async function loadReportes(dias = 30) {
                   <td>${esc(p.creado_en.slice(11, 16))}</td>
                   <td>${esc(p.cliente_nombre)}</td>
                   <td>${esc(p.tipo)}</td>
+                  <td>${esc(p.repartidor_nombre || "—")}</td>
                   <td><span class="status-pill ${p.estado}">${estadoTxt(p.estado)}</span></td>
                   <td style="text-transform:capitalize">${esc(p.metodo_pago)}</td>
                   <td class="money">${money(p.total)}</td>
-                </tr>`).join("") || `<tr><td colspan="7" style="text-align:center;color:var(--gris-400)">Sin comandas hoy</td></tr>`}
+                </tr>`).join("") || `<tr><td colspan="8" style="text-align:center;color:var(--gris-400)">Sin comandas hoy</td></tr>`}
             </tbody>
           </table>
         </div>

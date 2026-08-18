@@ -24,8 +24,9 @@ def get_pedido(pedido_id: int, rid: int = Depends(get_restaurante_id)):
 
 
 @router.post("/{pedido_id}/estado")
-def cambiar_estado(pedido_id: int, estado: str, rid: int = Depends(get_restaurante_id)):
-    return svc.cambiar_estado(rid, pedido_id, estado)
+def cambiar_estado(pedido_id: int, estado: str, repartidor: str = "",
+                   rid: int = Depends(get_restaurante_id)):
+    return svc.cambiar_estado(rid, pedido_id, estado, repartidor)
 
 
 @router.post("/{pedido_id}/cancelar")

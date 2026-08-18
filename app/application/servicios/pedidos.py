@@ -110,7 +110,7 @@ def get_pedido(rid: int, pedido_id: int):
     return pd
 
 
-def cambiar_estado(rid: int, pedido_id: int, estado: str):
+def cambiar_estado(rid: int, pedido_id: int, estado: str, repartidor: str = ""):
     if not reglas.es_estado_valido(estado):
         raise HTTPException(400, f"Estado inválido: {estado}")
     data, _ = repo.select("pedidos", restaurante_id=rid, eq={"id": pedido_id})
@@ -122,6 +122,13 @@ def cambiar_estado(rid: int, pedido_id: int, estado: str):
     if not reglas.es_transicion_valida(ped["estado"], estado):
         raise HTTPException(400, f"No se puede pasar de {ped['estado']} a {estado}")
     campos = reglas.marca_temporal(estado)
+    if estado == "en_camino":
+        if ped["tipo"] != "domicilio":
+            raise HTTPException(400, "Sólo los pedidos a domicilio pueden enviarse con repartidor")
+        repartidor = repartidor.strip()
+        if not repartidor:
+            raise HTTPException(400, "Escribe el nombre del repartidor")
+        campos["repartidor_nombre"] = repartidor
     repo.update("pedidos", campos, {"id": pedido_id}, restaurante_id=rid)
     return {"ok": True, "estado": estado}
 

@@ -22,3 +22,8 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/sw.js")
+def service_worker():
+    return FileResponse(STATIC / "sw.js", media_type="application/javascript")

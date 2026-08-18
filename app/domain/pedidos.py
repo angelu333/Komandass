@@ -1,10 +1,12 @@
 """Reglas de negocio del flujo de pedidos. Módulo puro: no importa la BD."""
 from datetime import datetime
 
-ESTADOS_VALIDOS = {"recibido", "preparacion", "entregado", "cancelado"}
+ESTADOS_VALIDOS = {"recibido", "preparacion", "listo", "en_camino", "entregado", "cancelado"}
 TRANSICIONES = {
     "recibido": {"preparacion", "cancelado"},
-    "preparacion": {"entregado", "cancelado"},
+    "preparacion": {"listo", "cancelado"},
+    "listo": {"en_camino", "entregado", "cancelado"},
+    "en_camino": {"entregado", "cancelado"},
     "entregado": set(),
 }
 
@@ -43,9 +45,15 @@ def marca_temporal(estado: str) -> dict:
     'entregado' implica el cobro: se registra en pagado_en (columna existente)."""
     campos = {"estado": estado}
     ahora = datetime.now().isoformat()
-    if estado == "entregado":
-        campos["pagado_en"] = ahora
+    if estado == "preparacion":
+        campos["preparacion_en"] = ahora
+    elif estado == "listo":
+        campos["listo_en"] = ahora
+    elif estado == "en_camino":
         campos["enviado_en"] = ahora
+    elif estado == "entregado":
+        campos["pagado_en"] = ahora
+        campos["entregado_en"] = ahora
     elif estado == "cancelado":
         campos["cancelado_en"] = ahora
         campos["motivo_cancelacion"] = "cancelado manualmente"

@@ -53,6 +53,29 @@ def resumen_dia(rid: int, fecha: str = ""):
             contar[d["producto_nombre"]] = contar.get(d["producto_nombre"], 0) + d["cantidad"]
     top = sorted(contar.items(), key=lambda x: x[1], reverse=True)[:10]
 
+    repartidores = {}
+    for p in pedidos:
+        if p.get("tipo") != "domicilio" or not p.get("repartidor_nombre"):
+            continue
+        nombre = p["repartidor_nombre"].strip()
+        r = repartidores.setdefault(nombre, {"nombre": nombre, "asignados": 0, "en_camino": 0,
+                                             "entregados": 0, "efectivo_por_rendir": 0.0,
+                                             "pendiente_por_cobrar": 0.0})
+        r["asignados"] += 1
+        if p["estado"] == "en_camino":
+            r["en_camino"] += 1
+            if p.get("metodo_pago") == "efectivo":
+                r["pendiente_por_cobrar"] += p["total"]
+        elif p["estado"] == "entregado":
+            r["entregados"] += 1
+            if p.get("metodo_pago") == "efectivo":
+                r["efectivo_por_rendir"] += p["total"]
+    repartidores_lista = [
+        {**r, "efectivo_por_rendir": round(r["efectivo_por_rendir"], 2),
+         "pendiente_por_cobrar": round(r["pendiente_por_cobrar"], 2)}
+        for r in sorted(repartidores.values(), key=lambda x: x["nombre"].lower())
+    ]
+
     return {
         "fecha": fecha,
         "pedidos": len(pedidos),
@@ -61,6 +84,7 @@ def resumen_dia(rid: int, fecha: str = ""):
         "total": total,
         "por_pago": por_pago,
         "top": [{"nombre": n, "cantidad": c} for n, c in top],
+        "repartidores": repartidores_lista,
         "lista": pedidos,
     }
 

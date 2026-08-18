@@ -347,8 +347,12 @@ table.data tr.inactivo td { opacity: .55; background: #f6f7f8; }
 }
 .status-pill.recibido { background: #e8f0fe; color: var(--azul); }
 .status-pill.preparacion { background: #fdf3e0; color: var(--ambar); }
+.status-pill.listo { background: #e6f7ea; color: var(--verde-osc); }
+.status-pill.en_camino { background: #f1eafe; color: #6847a8; }
 .status-pill.entregado { background: var(--gris-800); color: #fff; }
 .status-pill.cancelado { background: #fde8e8; color: var(--rojo); }
+.delivery-summary { display:flex; flex-direction:column; gap:4px; padding:12px 14px; margin-bottom:14px; border-radius:12px; background:var(--gris-100); color:var(--gris-600); font-size:13px; }
+.delivery-summary strong { color:var(--gris-900); font-size:14px; }
 
 /* ============ ESTADÍSTICAS ============ */
 .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 18px; }
