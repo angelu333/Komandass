@@ -39,11 +39,13 @@ def get_menu(rid: int):
         productos, _ = repo.select("productos", restaurante_id=rid,
                                    eq={"categoria_id": cat["id"], "activo": 1}, order="orden")
         productos = [_enriquecer_producto(rid, p) for p in productos]
-        grupos, _ = repo.select("grupos_opciones", eq={"categoria_id": cat["id"]}, order="orden")
+        grupos, _ = repo.select("grupos_opciones", restaurante_id=rid,
+                                eq={"categoria_id": cat["id"]}, order="orden")
         grupos_rich = []
         for g in grupos:
             gd = dict(g)
-            opts, _ = repo.select("opciones", eq={"grupo_id": g["id"]}, order="orden")
+            opts, _ = repo.select("opciones", restaurante_id=rid,
+                                  eq={"grupo_id": g["id"]}, order="orden")
             gd["opciones"] = opts
             grupos_rich.append(gd)
         result.append({"categoria": cat, "productos": productos, "opciones": grupos_rich})
@@ -62,9 +64,11 @@ def catalogo_completo(rid: int):
         productos, _ = repo.select("productos", restaurante_id=rid,
                                    eq={"categoria_id": cat["id"]}, order="orden")
         productos = [_enriquecer_producto(rid, p) for p in productos]
-        opciones, _ = repo.select("grupos_opciones", eq={"categoria_id": cat["id"]}, order="orden")
+        opciones, _ = repo.select("grupos_opciones", restaurante_id=rid,
+                                  eq={"categoria_id": cat["id"]}, order="orden")
         for g in opciones:
-            g["opciones"] = repo.select("opciones", eq={"grupo_id": g["id"]}, order="orden")[0]
+            g["opciones"] = repo.select("opciones", restaurante_id=rid,
+                                         eq={"grupo_id": g["id"]}, order="orden")[0]
         result.append({"categoria": cat, "productos": productos, "opciones": opciones})
     return result
 
@@ -79,7 +83,8 @@ def personalizados(rid: int):
     out = []
     for g in grupos:
         gd = dict(g)
-        opts, _ = repo.select("opciones", eq={"grupo_id": g["id"]}, order="orden")
+        opts, _ = repo.select("opciones", restaurante_id=rid,
+                              eq={"grupo_id": g["id"]}, order="orden")
         gd["opciones"] = opts
         out.append(gd)
     return out
@@ -96,6 +101,24 @@ def precio_combinado(rid: int):
 def editar_precio_combinado(rid: int, valor: str):
     repo.set_config("precio_combinado", valor, restaurante_id=rid)
     return {"ok": True}
+
+
+def regla_mitad(rid: int):
+    raw = repo.get_config("pizza_regla_mitad", "", restaurante_id=rid)
+    try:
+        return json.loads(raw) if raw else {"modo": "sin_cargo", "valor": 0, "precios": {}}
+    except (TypeError, ValueError):
+        return {"modo": "sin_cargo", "valor": 0, "precios": {}}
+
+
+def editar_regla_mitad(rid: int, regla: dict):
+    modo = regla.get("modo", "sin_cargo")
+    if modo not in {"sin_cargo", "fijo", "por_tamano"}:
+        raise HTTPException(400, "Regla de mitad y mitad inválida")
+    limpia = {"modo": modo, "valor": max(0, float(regla.get("valor", 0) or 0)),
+              "precios": regla.get("precios") or {}}
+    repo.set_config("pizza_regla_mitad", json.dumps(limpia), restaurante_id=rid)
+    return limpia
 
 
 # ---------- CATEGORÍAS ----------

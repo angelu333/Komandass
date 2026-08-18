@@ -20,9 +20,21 @@ const state = {
   umbralWarn: 12,
   audio: null,
   precioCombinado: 15,
+  reglaMitad: { modo: "sin_cargo", valor: 0, precios: {} },
 };
 
 const guardarToken = t => { state.token = t; t ? localStorage.setItem("ctoken", t) : localStorage.removeItem("ctoken"); };
+
+// Supabase puede regresar de la confirmación de email con la sesión en el hash.
+// La guardamos antes de iniciar la app para llevar al usuario al onboarding.
+function recuperarSesionConfirmada() {
+  const hash = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+  const token = hash.get("access_token");
+  if (!token) return;
+  guardarToken(token);
+  history.replaceState(null, document.title, location.pathname + location.search);
+}
+recuperarSesionConfirmada();
 
 /* ============ OFFLINE (cola + banner) ============ */
 const COLA_KEY = "cola_offline";
@@ -229,12 +241,24 @@ async function manejarAuth(e) {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || "No se pudo iniciar sesión");
+    if (!j.session) {
+      if (authMode === "register") {
+        setAuthMode("login");
+        mostrarErrorAuth("Revisa tu correo y confirma tu cuenta. Después inicia sesión para registrar tu negocio.");
+        return;
+      }
+      throw new Error("No se pudo crear una sesión. Intenta iniciar sesión nuevamente.");
+    }
     guardarToken(j.session);
     const me = await api("/me", "GET");
+    state.user = me.user;
+    state.negocio = me.negocio || null;
+    if (!me.negocio) {
+      mostrarOnboarding();
+      $("#on-nombre").focus();
+      return;
+    }
     cargarApp();
-    if (!me.negocio) { estadoOnboarding(); return; }
-    state.negocio = me.negocio;
-    $("#brand-name").textContent = state.negocio.nombre;
   } catch (err) {
     mostrarErrorAuth(err.message);
   } finally {
@@ -321,6 +345,7 @@ function bootstrap() {
     state.ingredientes = ings;
     state.opciones = opc;
     state.precioCombinado = parseFloat((await api("/menu/config/precio_combinado").catch(() => ({ valor: "15" }))).valor || 15);
+    state.reglaMitad = await api("/menu/config/regla-mitad").catch(() => ({ modo: "sin_cargo", valor: 0, precios: {} }));
     renderCategorias();
     setTab("pedir");
   }).catch(e => toast("Error al cargar: " + e.message, "error"));
@@ -389,6 +414,12 @@ function renderProductos(catId) {
       <div class="card kitchen-empty" style="margin-top:18px">${icon("plate", 48)}<div style="font-size:15px;font-weight:700">Aún sin productos</div>
       <div style="margin-top:4px;color:var(--gris-400)">Agrégalos desde el Catálogo y aparecerán aquí al instante</div></div>` : `
     <div class="product-grid">
+      ${esPizza && cat.productos.some(p => p.personalizable === 1) ? `
+        <button class="product-btn pizza-create-btn" data-pizza-base="${cat.productos.find(p => p.personalizable === 1).id}">
+          ${icon("pizza", 40)}
+          <div class="name">Crear mi pizza</div>
+          <div class="price">Elige tus ingredientes</div>
+        </button>` : ""}
       ${cat.productos.map(p => `
         <button class="product-btn" data-pid="${p.id}">
           ${icon(p.icono, 40)}
@@ -398,10 +429,11 @@ function renderProductos(catId) {
     </div>`}`;
   $("#back-cats").addEventListener("click", renderCategoriasGrid);
   $$(".product-btn", izq).forEach(b => b.addEventListener("click", () => {
-    const pid = +b.dataset.pid;
+    const pid = +(b.dataset.pizzaBase || b.dataset.pid);
     const p = cat.productos.find(x => x.id === pid);
     const tieneOpciones = (cat.opciones || []).length > 0;
-    if (esPizza || esProductoPizza(p)) abrirPizzaBuilder(pid);
+    if (b.dataset.pizzaBase) abrirPizzaBuilder(pid, null, true);
+    else if (esPizza || esProductoPizza(p)) abrirPizzaBuilder(pid);
     else tieneOpciones ? abrirConfigurador(pid) : agregarDirecto(pid);
   }));
 }
@@ -630,7 +662,7 @@ function abrirConfigurador(productoId) {
 }
 
 /* ---------- CONSTRUCTOR DE PIZZA (estilo Domino's) ---------- */
-function abrirPizzaBuilder(productoId) {
+function abrirPizzaBuilder(productoId, indiceEdicion = null, desdeCero = false) {
   const p = state.menu.flatMap(c => c.productos).find(x => x.id === productoId);
   const cat = state.menu.find(c => c.productos.some(x => x.id === productoId));
   if (!p || !cat) return;
@@ -640,6 +672,8 @@ function abrirPizzaBuilder(productoId) {
   const precios = p.precios || {};
   const TAMANOS = ["individual", "chica", "mediana", "grande"];
 
+  const itemInicial = indiceEdicion != null ? state.carrito[indiceEdicion] : null;
+  desdeCero = desdeCero || !!itemInicial?.esPizzaCreada;
   const sel = {
     tamano: precios.mediana != null ? "mediana" : (precios.individual != null ? "individual" : (precios.chica != null ? "chica" : "grande")),
     optsSel: {},       // grupoId -> opcionId
@@ -651,7 +685,19 @@ function abrirPizzaBuilder(productoId) {
   });
   // Receta base: pre-marcar como entera
   (p.receta || []).forEach(iid => { if (!sel.ingMode[iid]) sel.ingMode[iid] = "entera"; });
-  let paso = 0, qty = 1, nota = "";
+  if (desdeCero) Object.keys(sel.ingMode).forEach(iid => delete sel.ingMode[iid]);
+  if (itemInicial) {
+    sel.tamano = itemInicial.tamano || sel.tamano;
+    sel.optsSel = { ...(itemInicial.opciones || {}) };
+    Object.keys(sel.ingMode).forEach(iid => delete sel.ingMode[iid]);
+    const pi = itemInicial.personalizada || {};
+    const izq = new Set(pi.mitad1 || []), der = new Set(pi.mitad2 || []);
+    [...new Set([...izq, ...der])].forEach(iid => {
+      sel.ingMode[iid] = izq.has(iid) && der.has(iid) ? "entera" : izq.has(iid) ? "izq" : "der";
+    });
+  }
+  let paso = 0, qty = itemInicial?.cantidad || 1, nota = itemInicial?.nota || "";
+  let modoMitad = itemInicial?.personalizada?.distribucion === "mitad";
 
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
@@ -659,12 +705,12 @@ function abrirPizzaBuilder(productoId) {
     <div class="modal wide">
       <div class="modal-head">
         ${icon(p.icono)}
-        <h3>${esc(p.nombre)}</h3>
+        <h3>${desdeCero ? "Crear mi pizza" : esc(p.nombre)}</h3>
         <div class="price-tag" style="margin-left:auto;font-size:22px;font-weight:900;color:var(--rojo)"></div>
         <button class="modal-close" id="pz-close">${icon("close")}</button>
       </div>
       <div class="pizza-steps">
-        ${["Tamaño", "Orilla", "Ingredientes", "Revisar"].map((n, i) => `
+        ${["Tamaño", "Masa y orilla", "Ingredientes", "Revisar"].map((n, i) => `
           <div class="pz-step" data-step="${i}"><span class="dot">${i + 1}</span><span>${n}</span></div>`).join("")}
       </div>
       <div id="pz-body"></div>
@@ -677,6 +723,17 @@ function abrirPizzaBuilder(productoId) {
 
   const body = $("#pz-body", modal);
   function precioBase() { return (sel.tamano && precios[sel.tamano] != null) ? +precios[sel.tamano] : p.precio_base; }
+  function ingredientesExtras() {
+    const receta = new Set(desdeCero ? [] : (p.receta || []));
+    return Object.keys(sel.ingMode).map(Number).filter(iid => !receta.has(iid));
+  }
+  function recargoMitad() {
+    if (personalizadaFinal()?.distribucion !== "mitad") return 0;
+    const regla = state.reglaMitad || {};
+    if (regla.modo === "fijo") return +(regla.valor || 0);
+    if (regla.modo === "por_tamano") return +((regla.precios || {})[sel.tamano] || 0);
+    return 0;
+  }
   function precioUnit() {
     let t = precioBase();
     for (const gid in sel.optsSel) {
@@ -684,6 +741,11 @@ function abrirPizzaBuilder(productoId) {
       const o = g?.opciones.find(x => x.id == sel.optsSel[gid]);
       if (o) t += o.recargo;
     }
+    ingredientesExtras().forEach(iid => {
+      const ing = ingredientes.find(i => i.id === iid);
+      if (ing) t += +ing.recargo || 0;
+    });
+    t += recargoMitad();
     return Math.round(t * 100) / 100;
   }
   function updateTotal() { $(".price-tag", modal).textContent = money(precioUnit() * qty); }
@@ -696,7 +758,7 @@ function abrirPizzaBuilder(productoId) {
       else if (m === "der") mitad2.push(+iid);
     }
     if (!mitad1.length && !mitad2.length) return null;
-    const esMitad = mitad2.some(i => !mitad1.includes(i)) || mitad1.some(i => !mitad2.includes(i));
+    const esMitad = modoMitad || mitad2.some(i => !mitad1.includes(i)) || mitad1.some(i => !mitad2.includes(i));
     return { distribucion: esMitad ? "mitad" : "combinado", mitad1, mitad2 };
   }
   function renderPaso() {
@@ -746,13 +808,19 @@ function abrirPizzaBuilder(productoId) {
         renderPaso();
       }));
     } else if (paso === 2) {
-      const porTamano = Object.keys(precios).length > 0;
       body.innerHTML = `
-        <div class="opt-label" style="margin-bottom:6px">Ingredientes — toca para cambiar</div>
+        <div class="pizza-choice-row">
+          <div><strong>¿Cómo se prepara?</strong><span>Selecciona pizza completa o divide las mitades.</span></div>
+          <div class="opt-chips">
+            <button class="chip ${!modoMitad ? "selected" : ""}" data-dist="combinado">Pizza completa</button>
+            <button class="chip ${modoMitad ? "selected" : ""}" data-dist="mitad">Mitad y mitad</button>
+          </div>
+        </div>
+        <div class="opt-label" style="margin-bottom:6px">Ingredientes — los incluidos no generan cargo; los adicionales muestran su precio.</div>
         <div class="ing-list">
           ${ingredientes.length ? ingredientes.map(i => `
             <div class="ing-row">
-              <span class="ing-name">${esc(i.nombre)}${i.recargo && !porTamano ? `<span class="rec">+${money(i.recargo)}</span>` : ""}</span>
+              <span class="ing-name">${esc(i.nombre)}${(p.receta || []).includes(i.id) ? `<span class="included-tag">Incluido</span>` : i.recargo ? `<span class="rec">+${money(i.recargo)}</span>` : ""}</span>
               <div class="ing-modes">
                 ${[["", "Sin"], ["entera", "Entera"], ["izq", "½ Izq"], ["der", "½ Der"]].map(([v, lbl]) => `
                   <button class="mode ${(sel.ingMode[i.id] || "") === v ? "selected" : ""}" data-i="${i.id}" data-v="${v}">${lbl}</button>`).join("")}
@@ -762,6 +830,13 @@ function abrirPizzaBuilder(productoId) {
       $$("[data-i]", body).forEach(b => b.addEventListener("click", () => {
         const iid = +b.dataset.i, v = b.dataset.v;
         if (v === "") delete sel.ingMode[iid]; else sel.ingMode[iid] = v;
+        renderPaso();
+      }));
+      $$("[data-dist]", body).forEach(b => b.addEventListener("click", () => {
+        modoMitad = b.dataset.dist === "mitad";
+        if (!modoMitad) {
+          Object.keys(sel.ingMode).forEach(iid => { sel.ingMode[iid] = "entera"; });
+        }
         renderPaso();
       }));
     } else {
@@ -786,6 +861,8 @@ function abrirPizzaBuilder(productoId) {
             return o ? `<div class="resumen-row"><span>${esc(g.nombre)}</span><strong>${esc(o.nombre)}${o.recargo ? ` · ${money(o.recargo)}` : ""}</strong></div>` : "";
           }).join("")}
           <div class="resumen-row"><span>${icon("egg")}Ingredientes</span><strong style="text-align:right">${esc(persNombres())}</strong></div>
+          ${ingredientesExtras().length ? `<div class="resumen-row"><span>Extras</span><strong>${esc(ingredientesExtras().map(id => (ingredientes.find(i => i.id === id) || {}).nombre).filter(Boolean).join(", "))}</strong></div>` : ""}
+          ${recargoMitad() ? `<div class="resumen-row"><span>Mitad y mitad</span><strong>+ ${money(recargoMitad())}</strong></div>` : ""}
           <div class="opt-group">
             <div class="opt-label">Cantidad</div>
             <div class="amt" style="margin-top:0">
@@ -796,7 +873,7 @@ function abrirPizzaBuilder(productoId) {
           </div>
           <div class="opt-group">
             <div class="opt-label">Nota (opcional)</div>
-            <input id="pz-nota" maxlength="120" placeholder="Ej: sin cebolla, cortada en 8…" style="width:100%;border:1.5px solid var(--gris-200);border-radius:10px;padding:9px 12px;font-size:13px">
+            <input id="pz-nota" value="${esc(nota)}" maxlength="120" placeholder="Ej: sin cebolla, cortada en 8…" style="width:100%;border:1.5px solid var(--gris-200);border-radius:10px;padding:9px 12px;font-size:13px">
           </div>
         </div>`;
       $("#pz-minus", modal).onclick = () => { qty = Math.max(1, qty - 1); $("#pz-qty", modal).textContent = qty; updateTotal(); };
@@ -810,22 +887,23 @@ function abrirPizzaBuilder(productoId) {
   $("#pz-back", modal).onclick = () => { if (paso > 0) { paso--; renderPaso(); } };
   $("#pz-next", modal).onclick = () => {
     if (paso < 3) { paso++; renderPaso(); return; }
-    state.carrito.push({
-      producto: p, tamano: sel.tamano, opciones: { ...sel.optsSel }, extras: [],
-      personalizada: personalizadaFinal() || undefined,
-      cantidad: qty, nota,
-    });
+    const personalizada = personalizadaFinal() || { distribucion: "combinado", mitad1: [], mitad2: [] };
+    personalizada.ingredientes_extra = ingredientesExtras();
+    personalizada.desde_cero = desdeCero;
+    const productoCarrito = desdeCero ? { ...p, nombre: "Pizza personalizada", receta: [] } : p;
+    const item = { producto: productoCarrito, tamano: sel.tamano, opciones: { ...sel.optsSel }, extras: [], personalizada, cantidad: qty, nota, esPizzaCreada: desdeCero };
+    if (indiceEdicion != null) state.carrito[indiceEdicion] = item;
+    else state.carrito.push(item);
     modal.remove();
     renderCarrito();
     renderCategoriasGrid();
-    toast(`${p.nombre} agregado al pedido`);
+    toast(indiceEdicion != null ? "Pizza actualizada" : `${desdeCero ? "Pizza personalizada" : p.nombre} agregada al pedido`);
   };
   renderPaso();
 }
 
 function calcPrecio(p, opciones, extras, personalizada, tamano) {
   const precios = p.precios || {};
-  const porTamano = Object.keys(precios).length > 0;
   let t = (tamano && precios[tamano] != null) ? +precios[tamano] : p.precio_base;
   for (const gid in opciones) {
     const g = state.opciones.find(x => x.id == gid);
@@ -833,9 +911,17 @@ function calcPrecio(p, opciones, extras, personalizada, tamano) {
     if (o) t += o.recargo;
   }
   if (personalizada) {
-    const lista = [...(personalizada.mitad1 || []), ...(personalizada.mitad2 || [])];
-    // En pizzas con precio por tamaño los ingredientes ya están incluidos.
-    if (!porTamano && personalizada.distribucion === "combinado" && lista.length >= 2) t += (state.precioCombinado ?? 15);
+    const lista = personalizada.ingredientes_extra != null ? personalizada.ingredientes_extra :
+      [...new Set([...(personalizada.mitad1 || []), ...(personalizada.mitad2 || [])])].filter(iid => !(p.receta || []).includes(iid));
+    [...new Set(lista)].forEach(iid => {
+      const i = state.ingredientes.find(x => x.id == iid);
+      if (i) t += +i.recargo || 0;
+    });
+    if (personalizada.distribucion === "mitad") {
+      const regla = state.reglaMitad || {};
+      if (regla.modo === "fijo") t += +(regla.valor || 0);
+      if (regla.modo === "por_tamano") t += +((regla.precios || {})[tamano] || 0);
+    }
   } else {
     extras.forEach(iid => {
       const i = state.ingredientes.find(x => x.id == iid);
@@ -859,11 +945,11 @@ function descripcionItem(item) {
     const n = id => (state.ingredientes.find(x => x.id == id) || {}).nombre;
     if (item.personalizada.distribucion === "combinado") {
       const todos = [...(item.personalizada.mitad1 || []), ...(item.personalizada.mitad2 || [])].map(n).filter(Boolean);
-      partes.push("Personalizada: Combinado (" + todos.join(", ") + ")");
+      partes.push(todos.length ? "Ingredientes: " + [...new Set(todos)].join(", ") : "Sin toppings");
     } else {
       const m1 = (item.personalizada.mitad1 || []).map(n).filter(Boolean).join(", ");
       const m2 = (item.personalizada.mitad2 || []).map(n).filter(Boolean).join(", ");
-      partes.push(`Personalizada: Mitad y mitad — Mitad 1 (${m1}) · Mitad 2 (${m2})`);
+      partes.push(`Mitad y mitad — Izquierda (${m1 || "—"}) · Derecha (${m2 || "—"})`);
     }
   } else if (item.extras && item.extras.length) {
     const docs = item.extras.map(iid => (state.ingredientes.find(x => x.id == iid) || {}).nombre).filter(Boolean).join(", ");
@@ -895,6 +981,7 @@ function renderCarritoHTML() {
               <button class="amt-btn" data-dec="${idx}">${icon("minus")}</button>
               <span class="qty">${it.cantidad}</span>
               <button class="amt-btn" data-inc="${idx}">${icon("plus")}</button>
+              ${it.personalizada ? `<button class="btn btn-sm btn-ghost" data-editpizza="${idx}">${icon("edit")}Editar</button>` : ""}
               <button class="btn btn-sm btn-danger-outline" data-del="${idx}" style="margin-left:auto">${icon("trash")}</button>
             </div>
           </div>`).join("")}
@@ -926,6 +1013,10 @@ function bindCart() {
     it.cantidad--;
     if (it.cantidad <= 0) state.carrito.splice(+b.dataset.dec, 1);
     renderCarrito();
+  });
+  $$("[data-editpizza]").forEach(b => b.onclick = () => {
+    const idx = +b.dataset.editpizza;
+    abrirPizzaBuilder(state.carrito[idx].producto.id, idx, state.carrito[idx].esPizzaCreada);
   });
   $$("[data-del]").forEach(b => b.onclick = () => { state.carrito.splice(+b.dataset.del, 1); renderCarrito(); });
   $$("[data-nota]").forEach(inp => inp.addEventListener("change", () => {
@@ -1008,6 +1099,7 @@ function abrirModalConfirmar() {
   $("#mc-confirm", modal).onclick = async () => {
     const payload = { ...state.pedido, items: state.carrito.map(it => ({
       producto_id: it.producto.id, cantidad: it.cantidad,
+      ...(it.esPizzaCreada ? { nombre_personalizado: "Pizza personalizada" } : {}),
       ...(it.tamano ? { tamano: it.tamano } : {}),
       opciones: Object.fromEntries(Object.entries(it.opciones).map(([k, v]) => [k, v])),
       ingredientes_extra: it.extras,
@@ -1339,6 +1431,7 @@ async function loadMenu() {
           <div style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <span class="opt-label" style="margin:0">Grupos de opciones</span>
             <button class="btn btn-sm btn-ghost" data-nuevogrupo="${c.categoria.id}">${icon("plus")}Agregar grupo</button>
+            ${/pizza/i.test(c.categoria.nombre) ? `<button class="btn btn-sm btn-ghost" data-reglamitad>${icon("motor")}Precio mitad y mitad</button>` : ""}
             ${!c.opciones.length ? `<button class="btn btn-sm" data-plantilla="${c.categoria.id}">${icon("wand")}Crear plantilla Tamaño + Orilla</button>` : ""}
           </div>
           ${c.opciones.map(g => `
@@ -1383,6 +1476,7 @@ async function loadMenu() {
       state.precioCombinado = val;
       toast("Recargo combinado actualizado", "ok");
     }));
+    $$("[data-reglamitad]", v).forEach(b => b.addEventListener("click", modalReglaMitad));
     $$("[data-editprod]", v).forEach(b => b.addEventListener("click", () => {
       const pid = +b.dataset.editprod;
       const p = catalogo.flatMap(c => c.productos).find(x => x.id === pid);
@@ -1529,6 +1623,49 @@ function modalNuevoGrupo(categoriaId) {
       toast("Grupo creado", "ok");
       modal.remove();
       loadMenu();
+    } catch (e) { toast("Error: " + e.message, "error"); }
+  };
+}
+
+function modalReglaMitad() {
+  const regla = state.reglaMitad || { modo: "sin_cargo", valor: 0, precios: {} };
+  const precios = regla.precios || {};
+  const modal = document.createElement("div");
+  modal.className = "modal-backdrop";
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-head"><h3>Precio de mitad y mitad</h3><button class="modal-close" id="rm-close">${icon("close")}</button></div>
+      <p class="pizza-help">Esta regla se aplica además del tamaño, masa, orilla e ingredientes extra. El total se calcula automáticamente al tomar la orden.</p>
+      <div class="field"><label>Cómo cobrarla</label>
+        <select id="rm-modo">
+          <option value="sin_cargo" ${regla.modo === "sin_cargo" ? "selected" : ""}>Sin cargo adicional</option>
+          <option value="fijo" ${regla.modo === "fijo" ? "selected" : ""}>Cargo fijo</option>
+          <option value="por_tamano" ${regla.modo === "por_tamano" ? "selected" : ""}>Cargo distinto por tamaño</option>
+        </select>
+      </div>
+      <div id="rm-valores"></div>
+      <div class="modal-foot"><button class="btn ghost" id="rm-cancel">Cancelar</button><button class="btn btn-primary" id="rm-save">${icon("check")}Guardar regla</button></div>
+    </div>`;
+  $("#modal-root").appendChild(modal);
+  function valores() {
+    const modo = $("#rm-modo", modal).value;
+    $("#rm-valores", modal).innerHTML = modo === "fijo" ? `
+      <div class="field"><label>Cargo adicional</label><input id="rm-fijo" type="number" min="0" step="0.5" value="${regla.valor || 0}"></div>` :
+      modo === "por_tamano" ? `<div class="field"><label>Cargo adicional por tamaño</label>
+        ${["individual", "chica", "mediana", "grande"].map(t => `<div class="price-rule-row"><span>${t[0].toUpperCase() + t.slice(1)}</span><input data-rm-size="${t}" type="number" min="0" step="0.5" value="${precios[t] || 0}"></div>`).join("")}
+      </div>` : `<div class="pizza-help">No se sumará un cargo extra al elegir mitades.</div>`;
+  }
+  valores();
+  $("#rm-modo", modal).onchange = valores;
+  $("#rm-close", modal).onclick = $("#rm-cancel", modal).onclick = () => modal.remove();
+  $("#rm-save", modal).onclick = async () => {
+    const modo = $("#rm-modo", modal).value;
+    const nueva = { modo, valor: +( $("#rm-fijo", modal)?.value || 0), precios: {} };
+    $$("[data-rm-size]", modal).forEach(i => { nueva.precios[i.dataset.rmSize] = +(i.value || 0); });
+    try {
+      state.reglaMitad = await api("/menu/config/regla-mitad", "PUT", nueva);
+      toast("Regla de mitad y mitad actualizada");
+      modal.remove();
     } catch (e) { toast("Error: " + e.message, "error"); }
   };
 }

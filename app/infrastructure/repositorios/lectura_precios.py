@@ -1,3 +1,5 @@
+import json
+
 from app.infrastructure.repositorios import base as repo
 
 
@@ -38,3 +40,10 @@ class LectorPreciosSupabase:
             return float(valor)
         except (TypeError, ValueError):
             return 15.0
+
+    def configuracion_mitad(self) -> dict:
+        raw = repo.get_config("pizza_regla_mitad", "", restaurante_id=self.rid)
+        try:
+            return json.loads(raw) if raw else {"modo": "sin_cargo"}
+        except (TypeError, ValueError):
+            return {"modo": "sin_cargo"}

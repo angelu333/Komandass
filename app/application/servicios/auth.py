@@ -1,7 +1,5 @@
-import httpx
 from fastapi import HTTPException
 
-from app.core.config import SUPABASE_KEY, SUPABASE_URL
 from app.infrastructure.repositorios import base as repo
 
 
@@ -11,21 +9,6 @@ def _payload(user, session=None):
         "email": getattr(user, "email", ""),
         "session": session.access_token if session else None,
     }
-
-
-def confirma_email(user_id: str | None = None) -> bool:
-    try:
-        if not user_id:
-            return False
-        r = httpx.put(
-            f"{SUPABASE_URL}/auth/v1/admin/users/{user_id}",
-            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-            json={"email_confirm": True},
-            timeout=15,
-        )
-        return r.status_code == 200
-    except Exception:
-        return False
 
 
 def signup(email: str, password: str):
@@ -38,12 +21,8 @@ def signup(email: str, password: str):
         if "rate limit" in msg.lower():
             raise HTTPException(429, "Demasiados intentos. Espera unos minutos e inténtalo de nuevo")
         raise HTTPException(400, f"No se pudo crear la cuenta: {msg[:120]}")
-    confirma_email(getattr(user, "id", None))
-    if session is None:
-        try:
-            user, session = repo.auth_login(email, password)
-        except Exception:
-            pass
+    # Si Supabase exige confirmar el correo, session será None. El frontend
+    # informa el siguiente paso y consume la sesión del enlace de confirmación.
     return _payload(user, session)
 
 

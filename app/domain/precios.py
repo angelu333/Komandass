@@ -12,6 +12,7 @@ class LectorPrecios(Protocol):
     def opcion(self, opcion_id: int) -> dict | None: ...          # -> {nombre, grupo_id}
     def nombre_grupo(self, grupo_id: int) -> str | None: ...
     def precio_combinado(self) -> float: ...
+    def configuracion_mitad(self) -> dict: ...
 
 
 def _personalizada_ingredientes(personalizada) -> list:
@@ -34,6 +35,37 @@ def _recargo_combinado(personalizada, lector: LectorPrecios) -> float:
     return lector.precio_combinado()
 
 
+def _ids_unicos(ids) -> list[int]:
+    """Conserva el orden y evita cobrar dos veces un ingrediente entero."""
+    return list(dict.fromkeys(int(i) for i in (ids or [])))
+
+
+def _extras_personalizados(producto: dict, personalizada: dict) -> list[int]:
+    """Obtiene sólo los toppings añadidos, nunca los de la receta incluida.
+
+    ``ingredientes_extra`` se guarda explícitamente por el configurador nuevo.
+    El fallback mantiene compatibles los pedidos creados con el configurador
+    anterior, que sólo enviaba las dos mitades.
+    """
+    if personalizada.get("ingredientes_extra") is not None:
+        return _ids_unicos(personalizada.get("ingredientes_extra"))
+    receta = set() if personalizada.get("desde_cero") else set(_ids_unicos(producto.get("receta", [])))
+    return [i for i in _ids_unicos(_personalizada_ingredientes(personalizada))
+            if i not in receta]
+
+
+def _recargo_mitad(tamano: str, personalizada: dict, lector: LectorPrecios) -> float:
+    if not personalizada or personalizada.get("distribucion") != "mitad":
+        return 0.0
+    cfg = lector.configuracion_mitad() or {}
+    modo = cfg.get("modo", "sin_cargo")
+    if modo == "fijo":
+        return float(cfg.get("valor", 0) or 0)
+    if modo == "por_tamano":
+        return float((cfg.get("precios") or {}).get(tamano, 0) or 0)
+    return 0.0
+
+
 def calcular_precio(producto, opciones, ingredientes_extra, personalizada=None,
                     tamano: str = "", *, lector: LectorPrecios) -> float:
     """opciones: {grupo_id: opcion_id} | ingredientes_extra: [ingrediente_id, ...]
@@ -46,7 +78,10 @@ def calcular_precio(producto, opciones, ingredientes_extra, personalizada=None,
     for opcion_id in opciones.values():
         total += lector.recargo_opcion(int(opcion_id))
     if personalizada:
-        total += _recargo_combinado(personalizada, lector)
+        # La receta está incluida en el precio de la pizza; sólo cobran extras.
+        for ing_id in _extras_personalizados(producto, personalizada):
+            total += lector.recargo_ingrediente(ing_id)
+        total += _recargo_mitad(tamano, personalizada, lector)
     else:
         for ing_id in ingredientes_extra:
             total += lector.recargo_ingrediente(int(ing_id))
@@ -75,12 +110,20 @@ def construir_descripcion(producto, opciones, ingredientes_extra, personalizada=
         mitad2 = personalizada.get("mitad2", []) or []
         n1 = ", ".join(_nombre_ingrediente(i, lector) for i in mitad1)
         n2 = ", ".join(_nombre_ingrediente(i, lector) for i in mitad2)
+        receta = set() if personalizada.get("desde_cero") else set(_ids_unicos(producto.get("receta", [])))
+        extras = _extras_personalizados(producto, personalizada)
+        eliminados = [i for i in receta if i not in set(_ids_unicos(mitad1 + mitad2))]
+        if eliminados:
+            partes.append("Sin: " + ", ".join(_nombre_ingrediente(i, lector) for i in eliminados))
         if dist == "combinado":
             todos = ", ".join(_nombre_ingrediente(i, lector)
                               for i in _personalizada_ingredientes(personalizada))
-            partes.append(f"Personalizada: Combinado ({todos})")
+            if todos:
+                partes.append(f"Ingredientes: {todos}")
         else:
             partes.append(f"Personalizada: Mitad y mitad — Mitad 1 ({n1}) · Mitad 2 ({n2})")
+        if extras:
+            partes.append("Extras: " + ", ".join(_nombre_ingrediente(i, lector) for i in extras))
     elif ingredientes_extra:
         nombres = [_nombre_ingrediente(i, lector) for i in ingredientes_extra]
         partes.append("Extras: " + ", ".join(nombres))

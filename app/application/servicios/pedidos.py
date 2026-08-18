@@ -31,6 +31,10 @@ def _leer_producto(rid: int, producto_id: int):
         p["precios"] = json.loads(p.get("precios")) if p.get("precios") else {}
     except (TypeError, ValueError):
         p["precios"] = {}
+    receta, _ = repo.select("producto_ingrediente", restaurante_id=rid,
+                            eq={"producto_id": producto_id, "base": 1},
+                            columns="ingrediente_id")
+    p["receta"] = [r["ingrediente_id"] for r in receta]
     return p
 
 
@@ -65,8 +69,9 @@ def crear_pedido(rid: int, p) -> dict:
             desc = (desc + " · " if desc else "") + "Nota: " + item.nota.strip()
         subtotal = round(precio_unit * item.cantidad, 2)
         total += subtotal
+        nombre_producto = (item.nombre_personalizado or "").strip() or prod["nombre"]
         repo.insert("detalle_pedido", [{
-            "pedido_id": pedido_id, "producto_id": prod["id"], "producto_nombre": prod["nombre"],
+            "pedido_id": pedido_id, "producto_id": prod["id"], "producto_nombre": nombre_producto,
             "cantidad": item.cantidad, "configuracion": desc,
             "precio_unitario": precio_unit, "subtotal": subtotal,
         }], restaurante_id=rid)

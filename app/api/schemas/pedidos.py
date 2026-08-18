@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 class ItemConfig(BaseModel):
     producto_id: int
+    nombre_personalizado: str = ""
     cantidad: int = 1
     tamano: str = ""
     opciones: dict = {}

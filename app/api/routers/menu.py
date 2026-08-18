@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 
-from app.api.schemas.menu import (CategoriaCreate, CategoriaUpdate, ConfigValor,
+from app.api.schemas.menu import (CategoriaCreate, CategoriaUpdate, ConfigValor, ReglaMitad,
                                   GrupoCreate, OpcionCreate, OpcionRecargo,
                                   ProductoCreate, ProductoUpdate)
 from app.application.servicios import menu as svc
@@ -48,6 +48,16 @@ def precio_combinado(rid: int = Depends(get_restaurante_id)):
 @router.put("/config/precio_combinado")
 def editar_precio_combinado(c: ConfigValor, rid: int = Depends(get_restaurante_id)):
     return svc.editar_precio_combinado(rid, c.valor)
+
+
+@router.get("/config/regla-mitad")
+def obtener_regla_mitad(rid: int = Depends(get_restaurante_id)):
+    return svc.regla_mitad(rid)
+
+
+@router.put("/config/regla-mitad")
+def actualizar_regla_mitad(regla: ReglaMitad, rid: int = Depends(get_restaurante_id)):
+    return svc.editar_regla_mitad(rid, regla.dict())
 
 
 # ---------- CATEGORÍAS ----------

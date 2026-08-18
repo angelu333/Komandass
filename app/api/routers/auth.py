@@ -21,7 +21,10 @@ def login(c: Credenciales):
 
 
 @router.get("/api/me")
-def me(user=Depends(get_current_user), rest=Depends(get_restaurante)):
+def me(user=Depends(get_current_user)):
+    # Un usuario recién registrado todavía no tiene negocio: es el estado
+    # esperado del onboarding, no un error 404.
+    rest = svc.datos_negocio(user.id)
     return {"user": {"id": user.id, "email": getattr(user, "email", "")},
             "negocio": rest}
 

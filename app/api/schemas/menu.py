@@ -58,3 +58,9 @@ class OpcionRecargo(BaseModel):
 
 class ConfigValor(BaseModel):
     valor: str
+
+
+class ReglaMitad(BaseModel):
+    modo: str = "sin_cargo"
+    valor: float = 0
+    precios: dict = {}
