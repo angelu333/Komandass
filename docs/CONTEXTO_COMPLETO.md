@@ -85,7 +85,7 @@ app/
 
 ## 4. Esquema de base de datos (Supabase)
 
-Archivos: `supabase_schema.sql` (base) + `migracion_pizza.sql` + `migracion_precios_pizza.sql`.
+Archivos en `sql/`: `supabase_schema.sql` (base) + `migracion_pizza.sql` + `migracion_precios_pizza.sql` + `migracion_estados_repartidores.sql`.
 
 ### Tablas principales
 | Tabla | Propósito | Columnas notables |

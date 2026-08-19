@@ -47,3 +47,10 @@ class LectorPreciosSupabase:
             return json.loads(raw) if raw else {"modo": "sin_cargo"}
         except (TypeError, ValueError):
             return {"modo": "sin_cargo"}
+
+    def regla_ingredientes_extra(self) -> dict:
+        raw = repo.get_config("pizza_regla_ingredientes", "", restaurante_id=self.rid)
+        try:
+            return json.loads(raw) if raw else {"modo": "individual", "incluidos": 0, "recargo_extra": 0.0}
+        except (TypeError, ValueError):
+            return {"modo": "individual", "incluidos": 0, "recargo_extra": 0.0}

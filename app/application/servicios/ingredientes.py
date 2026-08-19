@@ -1,30 +1,32 @@
 from fastapi import HTTPException
 
-from app.infrastructure.repositorios import base as repo
+from app.application.puertos import IngredientesRepository
+from app.infrastructure.repositorios.supabase_ingredientes import (
+    SupabaseIngredientesRepository,
+)
 
 
-def lista_ingredientes(rid: int):
-    data, _ = repo.select("ingredientes", restaurante_id=rid,
-                          eq={"activo": 1}, order="nombre")
-    return [{k: r[k] for k in ("id", "nombre", "recargo", "pizza", "activo")} for r in data]
+def lista_ingredientes(rid: int, repo: IngredientesRepository = SupabaseIngredientesRepository()):
+    return repo.listar_ingredientes(rid)
 
 
-def crear_ingrediente(rid: int, nombre: str, recargo: float, pizza: int = 1):
+def crear_ingrediente(rid: int, nombre: str, recargo: float, pizza: int = 1,
+                      repo: IngredientesRepository = SupabaseIngredientesRepository()):
     if not nombre.strip():
         raise HTTPException(400, "El nombre es obligatorio")
-    data = repo.insert("ingredientes", [{
+    iid = repo.crear_ingrediente(rid, {
         "nombre": nombre.strip(), "recargo": recargo,
         "pizza": pizza, "descontable": 1, "activo": 1,
-    }], restaurante_id=rid)
-    return {"id": data[0]["id"]}
+    })
+    return {"id": iid}
 
 
-def actualizar_ingrediente(rid: int, iid: int, campos: dict):
-    if campos:
-        repo.update("ingredientes", campos, {"id": iid}, restaurante_id=rid)
+def actualizar_ingrediente(rid: int, iid: int, campos: dict,
+                           repo: IngredientesRepository = SupabaseIngredientesRepository()):
+    repo.actualizar_ingrediente(rid, iid, campos)
     return {"ok": True}
 
 
-def borrar_ingrediente(rid: int, iid: int):
-    repo.delete("ingredientes", {"id": iid}, restaurante_id=rid)
+def borrar_ingrediente(rid: int, iid: int, repo: IngredientesRepository = SupabaseIngredientesRepository()):
+    repo.borrar_ingrediente(rid, iid)
     return {"ok": True}

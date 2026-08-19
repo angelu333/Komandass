@@ -273,42 +273,63 @@ html, body {
 }
 .seg.selected { border-color: var(--rojo); color: var(--rojo); background: #fff5f6; }
 
-/* ============ COCINA ============ */
-.kitchen-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+/* ============ COCINA (Comandas Rediseñadas - Opción A) ============ */
+.kitchen-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
 .order-card {
-  background: #fff; border-radius: var(--radius); box-shadow: var(--shadow);
+  background: #fff; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06);
   padding: 16px; position: relative; overflow: hidden;
+  border: 1.5px solid var(--gris-200);
   border-left: 6px solid var(--azul);
+  display: flex; flex-direction: column; gap: 12px;
+  transition: transform var(--dur) ease, box-shadow var(--dur) ease;
 }
+.order-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.09); }
 .order-card.ok { border-left-color: var(--verde); }
 .order-card.warn { border-left-color: var(--ambar); }
-.order-card.crit { border-left-color: var(--rojo); background: #fff7f7; }
-.order-card.entregado { opacity: .6; border-left-color: var(--gris-400); }
-.order-head { display: flex; align-items: flex-start; gap: 10px; }
-.order-folio { font-weight: 900; font-size: 15px; letter-spacing: .5px; }
-.order-meta { color: var(--gris-500); font-size: 12.5px; margin-top: 2px; }
-.timer-wrap { margin-left: auto; text-align: right; }
+.order-card.crit { border-left-color: var(--rojo); background: #fffdfd; }
+.order-card.entregado { opacity: .65; border-left-color: var(--gris-400); }
+
+.order-head { display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--gris-200); padding-bottom: 12px; }
+.order-head-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.order-folio { font-weight: 900; font-size: 17px; letter-spacing: .5px; color: var(--gris-900); }
+.timer-wrap { display: flex; align-items: center; gap: 8px; }
 .timer {
-  font-size: 26px; font-weight: 900; font-variant-numeric: tabular-nums;
-  color: var(--azul); line-height: 1;
+  font-size: 24px; font-weight: 900; font-variant-numeric: tabular-nums;
+  color: var(--azul); line-height: 1; letter-spacing: -0.5px;
 }
 .order-card.warn .timer { color: var(--ambar); }
 .order-card.crit .timer { color: var(--rojo); animation: blink 1s infinite; }
-.timer-dot {
-  font-size: 11px; color: var(--gris-400); vertical-align: middle; margin-left: 6px;
-}
+.timer-dot { font-size: 11px; color: var(--gris-400); vertical-align: middle; margin-left: 6px; }
 .order-card.crit .timer-dot { color: var(--rojo); }
 @keyframes blink { 50% { opacity: .35; } }
 
-.order-items { margin: 12px 0; display: flex; flex-direction: column; gap: 6px; }
-.order-item {
-  background: var(--gris-100); border-radius: 9px; padding: 8px 10px;
+.order-meta-box {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  color: var(--gris-600); font-size: 12.5px; font-weight: 600;
 }
-.order-item .ln1 { display: flex; gap: 8px; font-weight: 700; font-size: 14px; }
-.order-item .cfg { color: var(--gris-500); font-size: 12px; margin-top: 2px; }
+.order-type-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--gris-100); border-radius: 6px; padding: 3px 8px;
+  font-size: 12px; font-weight: 700; color: var(--gris-800);
+}
 
-.order-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.order-actions .btn { flex: 1; min-width: 96px; }
+.order-items { display: flex; flex-direction: column; gap: 10px; margin: 2px 0; }
+.order-item {
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px;
+}
+.order-item .ln1 { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14.5px; color: var(--gris-900); }
+.order-item .qty-badge { color: var(--rojo); font-weight: 900; font-size: 15px; }
+
+/* Chips de configuración */
+.cfg-chips-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cfg-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 8px; font-size: 12px; font-weight: 700;
+  line-height: 1.3;
+}
+
+.order-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px solid var(--gris-200); }
+.order-actions .btn { flex: 1; min-width: 100px; justify-content: center; font-weight: 800; border-radius: 10px; }
 
 .table-chip {
   display: inline-flex; align-items: center; gap: 6px;
@@ -505,3 +526,17 @@ table.data tr.inactivo td { opacity: .55; background: #f6f7f8; }
   .modal-foot .btn { flex: 1 1 40%; }
   .view { padding: 14px 12px; }
 }
+
+/* ============ CATEGORÍA PIZZA Y MODOS DE PIZZA ============ */
+.type-card, .pz-mode-card {
+  transition: all var(--dur) ease;
+}
+.type-card.selected, .pz-mode-card.selected {
+  border-color: var(--rojo) !important;
+  background: rgba(200, 16, 46, 0.05) !important;
+  box-shadow: 0 0 0 1px var(--rojo);
+}
+.type-card:hover, .pz-mode-card:hover {
+  border-color: var(--gris-400);
+}
+

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS categorias (
     id BIGSERIAL PRIMARY KEY,
     nombre TEXT NOT NULL UNIQUE,
     icono TEXT NOT NULL DEFAULT 'pizza',
+    tipo TEXT NOT NULL DEFAULT 'regular',
     orden INTEGER NOT NULL DEFAULT 0,
     activa INTEGER NOT NULL DEFAULT 1
 );

@@ -13,6 +13,7 @@ class LectorPrecios(Protocol):
     def nombre_grupo(self, grupo_id: int) -> str | None: ...
     def precio_combinado(self) -> float: ...
     def configuracion_mitad(self) -> dict: ...
+    def regla_ingredientes_extra(self) -> dict: ...
 
 
 def _personalizada_ingredientes(personalizada) -> list:
@@ -66,6 +67,20 @@ def _recargo_mitad(tamano: str, personalizada: dict, lector: LectorPrecios) -> f
     return 0.0
 
 
+def _calcular_recargo_ingredientes(extras: list[int], lector: LectorPrecios) -> float:
+    """Calcula el cobro por ingredientes extra según la regla del negocio:
+    - 'por_cantidad': N primeros incluidos gratis, cobro fijo por excedente.
+    - 'individual' (o por defecto): suma de recargos individuales de cada ingrediente."""
+    regla = getattr(lector, "regla_ingredientes_extra", None)
+    cfg = regla() if callable(regla) else {}
+    if cfg and cfg.get("modo") == "por_cantidad":
+        incluidos = max(0, int(cfg.get("incluidos", 0) or 0))
+        recargo_extra = max(0.0, float(cfg.get("recargo_extra", 0.0) or 0.0))
+        excedente = max(0, len(extras) - incluidos)
+        return round(excedente * recargo_extra, 2)
+    return sum(lector.recargo_ingrediente(ing_id) for ing_id in extras)
+
+
 def calcular_precio(producto, opciones, ingredientes_extra, personalizada=None,
                     tamano: str = "", *, lector: LectorPrecios) -> float:
     """opciones: {grupo_id: opcion_id} | ingredientes_extra: [ingrediente_id, ...]
@@ -79,12 +94,12 @@ def calcular_precio(producto, opciones, ingredientes_extra, personalizada=None,
         total += lector.recargo_opcion(int(opcion_id))
     if personalizada:
         # La receta está incluida en el precio de la pizza; sólo cobran extras.
-        for ing_id in _extras_personalizados(producto, personalizada):
-            total += lector.recargo_ingrediente(ing_id)
+        extras = _extras_personalizados(producto, personalizada)
+        total += _calcular_recargo_ingredientes(extras, lector)
         total += _recargo_mitad(tamano, personalizada, lector)
     else:
-        for ing_id in ingredientes_extra:
-            total += lector.recargo_ingrediente(int(ing_id))
+        extras = [int(i) for i in (ingredientes_extra or [])]
+        total += _calcular_recargo_ingredientes(extras, lector)
     return round(total, 2)
 
 
@@ -108,23 +123,23 @@ def construir_descripcion(producto, opciones, ingredientes_extra, personalizada=
         dist = personalizada.get("distribucion")
         mitad1 = personalizada.get("mitad1", []) or []
         mitad2 = personalizada.get("mitad2", []) or []
-        n1 = ", ".join(_nombre_ingrediente(i, lector) for i in mitad1)
-        n2 = ", ".join(_nombre_ingrediente(i, lector) for i in mitad2)
         receta = set() if personalizada.get("desde_cero") else set(_ids_unicos(producto.get("receta", [])))
         extras = _extras_personalizados(producto, personalizada)
-        eliminados = [i for i in receta if i not in set(_ids_unicos(mitad1 + mitad2))]
+        unicos = _ids_unicos(_personalizada_ingredientes(personalizada))
+        eliminados = [i for i in receta if i not in set(unicos)]
         if eliminados:
             partes.append("Sin: " + ", ".join(_nombre_ingrediente(i, lector) for i in eliminados))
         if dist == "combinado":
-            todos = ", ".join(_nombre_ingrediente(i, lector)
-                              for i in _personalizada_ingredientes(personalizada))
+            todos = ", ".join(_nombre_ingrediente(i, lector) for i in unicos)
             if todos:
                 partes.append(f"Ingredientes: {todos}")
         else:
+            n1 = ", ".join(_nombre_ingrediente(i, lector) for i in _ids_unicos(mitad1))
+            n2 = ", ".join(_nombre_ingrediente(i, lector) for i in _ids_unicos(mitad2))
             partes.append(f"Personalizada: Mitad y mitad — Mitad 1 ({n1}) · Mitad 2 ({n2})")
-        if extras:
+        if extras and (dist != "combinado" or set(extras) != set(unicos)):
             partes.append("Extras: " + ", ".join(_nombre_ingrediente(i, lector) for i in extras))
     elif ingredientes_extra:
-        nombres = [_nombre_ingrediente(i, lector) for i in ingredientes_extra]
+        nombres = [_nombre_ingrediente(i, lector) for i in _ids_unicos(ingredientes_extra)]
         partes.append("Extras: " + ", ".join(nombres))
     return " · ".join(partes)

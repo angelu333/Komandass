@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.schemas.menu import (CategoriaCreate, CategoriaUpdate, ConfigValor, ReglaMitad,
-                                  GrupoCreate, OpcionCreate, OpcionRecargo,
+                                  ReglaIngredientes, GrupoCreate, OpcionCreate, OpcionRecargo,
                                   ProductoCreate, ProductoUpdate)
 from app.application.servicios import menu as svc
 from app.core.deps import get_restaurante_id
@@ -60,10 +60,20 @@ def actualizar_regla_mitad(regla: ReglaMitad, rid: int = Depends(get_restaurante
     return svc.editar_regla_mitad(rid, regla.dict())
 
 
+@router.get("/config/regla-ingredientes")
+def obtener_regla_ingredientes(rid: int = Depends(get_restaurante_id)):
+    return svc.regla_ingredientes(rid)
+
+
+@router.put("/config/regla-ingredientes")
+def actualizar_regla_ingredientes(regla: ReglaIngredientes, rid: int = Depends(get_restaurante_id)):
+    return svc.editar_regla_ingredientes(rid, regla.dict())
+
+
 # ---------- CATEGORÍAS ----------
 @router.post("/categorias")
 def crear_categoria(c: CategoriaCreate, rid: int = Depends(get_restaurante_id)):
-    return svc.crear_categoria(rid, c.nombre, c.icono, c.orden, c.activa)
+    return svc.crear_categoria(rid, c.nombre, c.icono, c.tipo, c.orden, c.activa)
 
 
 @router.put("/categorias/{cid}")
@@ -73,6 +83,8 @@ def editar_categoria(cid: int, c: CategoriaUpdate, rid: int = Depends(get_restau
         campos["nombre"] = c.nombre
     if c.icono is not None:
         campos["icono"] = c.icono
+    if c.tipo is not None:
+        campos["tipo"] = c.tipo
     if c.orden is not None:
         campos["orden"] = c.orden
     if c.activa is not None:

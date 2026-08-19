@@ -21,9 +21,11 @@ const state = {
   audio: null,
   precioCombinado: 15,
   reglaMitad: { modo: "sin_cargo", valor: 0, precios: {} },
+  reglaIngredientes: { modo: "individual", incluidos: 0, recargo_extra: 0 },
 };
 
 const guardarToken = t => { state.token = t; t ? localStorage.setItem("ctoken", t) : localStorage.removeItem("ctoken"); };
+const esCategoriaPizza = cat => cat && (cat.tipo === "pizza" || /pizza/i.test(cat.nombre || ""));
 
 // Supabase puede regresar de la confirmación de email con la sesión en el hash.
 // La guardamos antes de iniciar la app para llevar al usuario al onboarding.
@@ -176,7 +178,7 @@ function setTab(tab) {
   cerrarMenu();
   $$(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
   VIEWS.forEach(v => $("#view-" + v).classList.toggle("active", v === tab));
-  if (tab === "pedir") renderCategoriasGrid();
+  if (tab === "pedir") renderCategorias();
   if (tab === "cocina") startKitchenLoop();
   if (tab === "historial") loadHistorial();
   if (tab === "menu") loadMenu();
@@ -368,6 +370,7 @@ function bootstrap() {
     state.opciones = opc;
     state.precioCombinado = parseFloat((await api("/menu/config/precio_combinado").catch(() => ({ valor: "15" }))).valor || 15);
     state.reglaMitad = await api("/menu/config/regla-mitad").catch(() => ({ modo: "sin_cargo", valor: 0, precios: {} }));
+    state.reglaIngredientes = await api("/menu/config/regla-ingredientes").catch(() => ({ modo: "individual", incluidos: 0, recargo_extra: 0 }));
     renderCategorias();
     setTab("pedir");
   }).catch(e => toast("Error al cargar: " + e.message, "error"));
@@ -700,6 +703,7 @@ function abrirPizzaBuilder(productoId, indiceEdicion = null, desdeCero = false) 
     tamano: precios.mediana != null ? "mediana" : (precios.individual != null ? "individual" : (precios.chica != null ? "chica" : "grande")),
     optsSel: {},       // grupoId -> opcionId
     ingMode: {},       // ingredienteId -> "entera" | "izq" | "der"  (ausente = sin)
+    modoIngChoice: "base"
   };
   grupos.forEach(g => {
     const def = g.opciones.find(o => o.nombre.toLowerCase().includes("mediana")) || g.opciones[0];
@@ -720,6 +724,7 @@ function abrirPizzaBuilder(productoId, indiceEdicion = null, desdeCero = false) 
   }
   let paso = 0, qty = itemInicial?.cantidad || 1, nota = itemInicial?.nota || "";
   let modoMitad = itemInicial?.personalizada?.distribucion === "mitad";
+  sel.modoIngChoice = modoMitad ? "mitad" : (Object.keys(sel.ingMode).length > 0 ? "entera" : "base");
 
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
@@ -749,6 +754,22 @@ function abrirPizzaBuilder(productoId, indiceEdicion = null, desdeCero = false) 
     const receta = new Set(desdeCero ? [] : (p.receta || []));
     return Object.keys(sel.ingMode).map(Number).filter(iid => !receta.has(iid));
   }
+  function recargoIngredientes() {
+    const extras = ingredientesExtras();
+    const regla = state.reglaIngredientes || {};
+    if (regla.modo === "por_cantidad") {
+      const inc = Math.max(0, regla.incluidos || 0);
+      const rec = Math.max(0, regla.recargo_extra || 0);
+      const excedente = Math.max(0, extras.length - inc);
+      return Math.round(excedente * rec * 100) / 100;
+    }
+    let sum = 0;
+    extras.forEach(iid => {
+      const ing = ingredientes.find(i => i.id === iid);
+      if (ing) sum += +ing.recargo || 0;
+    });
+    return Math.round(sum * 100) / 100;
+  }
   function recargoMitad() {
     if (personalizadaFinal()?.distribucion !== "mitad") return 0;
     const regla = state.reglaMitad || {};
@@ -763,10 +784,7 @@ function abrirPizzaBuilder(productoId, indiceEdicion = null, desdeCero = false) 
       const o = g?.opciones.find(x => x.id == sel.optsSel[gid]);
       if (o) t += o.recargo;
     }
-    ingredientesExtras().forEach(iid => {
-      const ing = ingredientes.find(i => i.id === iid);
-      if (ing) t += +ing.recargo || 0;
-    });
+    t += recargoIngredientes();
     t += recargoMitad();
     return Math.round(t * 100) / 100;
   }
@@ -830,35 +848,82 @@ function abrirPizzaBuilder(productoId, indiceEdicion = null, desdeCero = false) 
         renderPaso();
       }));
     } else if (paso === 2) {
+      let modoIng = sel.modoIngChoice || "base";
+      const reglaIng = state.reglaIngredientes || {};
+      const esPorCantidad = reglaIng.modo === "por_cantidad";
+      const inc = Math.max(0, reglaIng.incluidos || 0);
+      const numExtras = ingredientesExtras().length;
+      const costExtra = recargoIngredientes();
       body.innerHTML = `
-        <div class="pizza-choice-row">
-          <div><strong>¿Cómo se prepara?</strong><span>Selecciona pizza completa o divide las mitades.</span></div>
-          <div class="opt-chips">
-            <button class="chip ${!modoMitad ? "selected" : ""}" data-dist="combinado">Pizza completa</button>
-            <button class="chip ${modoMitad ? "selected" : ""}" data-dist="mitad">Mitad y mitad</button>
+        <div class="pizza-sec">
+          <div class="opt-label" style="margin-bottom:8px">¿Cómo deseas preparar esta pizza?</div>
+          <div class="pz-modes-grid" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:16px">
+            <button type="button" class="pz-mode-card ${modoIng === "base" ? "selected" : ""}" data-pzmode="base" style="padding:12px;border:2px solid var(--gris-200);border-radius:10px;background:var(--blanco);cursor:pointer;text-align:left">
+              <div style="font-size:15px;font-weight:700;margin-bottom:4px">🍕 Tal como viene</div>
+              <div style="font-size:12px;color:var(--gris-500)">Receta base sin modificar ingredientes.</div>
+            </button>
+            <button type="button" class="pz-mode-card ${modoIng === "entera" ? "selected" : ""}" data-pzmode="entera" style="padding:12px;border:2px solid var(--gris-200);border-radius:10px;background:var(--blanco);cursor:pointer;text-align:left">
+              <div style="font-size:15px;font-weight:700;margin-bottom:4px">🧩 Elige tus ingredientes</div>
+              <div style="font-size:12px;color:var(--gris-500)">Toppings revueltos en toda la pizza.</div>
+            </button>
+            <button type="button" class="pz-mode-card ${modoIng === "mitad" ? "selected" : ""}" data-pzmode="mitad" style="padding:12px;border:2px solid var(--gris-200);border-radius:10px;background:var(--blanco);cursor:pointer;text-align:left">
+              <div style="font-size:15px;font-weight:700;margin-bottom:4px">↕️ Mitad y mitad</div>
+              <div style="font-size:12px;color:var(--gris-500)">Ingredientes distintos por mitad (izq/der).</div>
+            </button>
           </div>
-        </div>
-        <div class="opt-label" style="margin-bottom:6px">Ingredientes — los incluidos no generan cargo; los adicionales muestran su precio.</div>
-        <div class="ing-list">
-          ${ingredientes.length ? ingredientes.map(i => `
-            <div class="ing-row">
-              <span class="ing-name">${esc(i.nombre)}${(p.receta || []).includes(i.id) ? `<span class="included-tag">Incluido</span>` : i.recargo ? `<span class="rec">+${money(i.recargo)}</span>` : ""}</span>
-              <div class="ing-modes">
-                ${[["", "Sin"], ["entera", "Entera"], ["izq", "½ Izq"], ["der", "½ Der"]].map(([v, lbl]) => `
-                  <button class="mode ${(sel.ingMode[i.id] || "") === v ? "selected" : ""}" data-i="${i.id}" data-v="${v}">${lbl}</button>`).join("")}
-              </div>
-            </div>`).join("") : `<div class="pizza-empty">${icon("egg", 44)}<div>Aún no hay ingredientes. Créalos desde Ingredientes (activa "Es topping de pizza").</div></div>`}
+          ${modoIng === "base" ? `
+            <div class="card" style="background:var(--gris-100);padding:14px;border-radius:10px">
+              <div style="font-weight:700;font-size:14px;margin-bottom:4px">🍕 Receta Tradicional</div>
+              <div style="color:var(--gris-500);font-size:13px">${esc(p.descripcion || "Se preparará con los ingredientes estándar de la especialidad.")}</div>
+            </div>
+          ` : `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+              <div class="opt-label" style="margin:0">${esPorCantidad ? `Toppings elegidos: ${numExtras} (${inc > 0 ? `Primeros ${inc} incluidos gratis` : 'Sin incluidos'})` : 'Ingredientes — marca los toppings deseados:'}</div>
+              ${esPorCantidad ? `<span class="status-pill ${costExtra > 0 ? 'cancelado' : ''}" style="font-size:12px;font-weight:700">${costExtra > 0 ? `+${money(costExtra)} extra` : 'Incluidos en el precio'}</span>` : ''}
+            </div>
+            <div class="ing-list">
+              ${ingredientes.length ? ingredientes.map(i => {
+                const esIncReceta = (p.receta || []).includes(i.id);
+                const tagLbl = esIncReceta ? `<span class="included-tag">Incluido</span>` : (!esPorCantidad && i.recargo ? `<span class="rec">+${money(i.recargo)}</span>` : "");
+                return `
+                <div class="ing-row">
+                  <span class="ing-name">${esc(i.nombre)}${tagLbl}</span>
+                  <div class="ing-modes">
+                    ${modoIng === "entera" ? `
+                      <button class="mode ${(sel.ingMode[i.id] === "entera") ? "selected" : ""}" data-i="${i.id}" data-v="${sel.ingMode[i.id] === "entera" ? "" : "entera"}">${sel.ingMode[i.id] === "entera" ? "✓ Agregado" : "+ Agregar"}</button>
+                    ` : `
+                      ${[["", "Sin"], ["entera", "Entera"], ["izq", "½ Izq"], ["der", "½ Der"]].map(([v, lbl]) => `
+                        <button class="mode ${(sel.ingMode[i.id] || "") === v ? "selected" : ""}" data-i="${i.id}" data-v="${v}">${lbl}</button>`).join("")}
+                    `}
+                  </div>
+                </div>`;
+              }).join("") : `<div class="pizza-empty">${icon("egg", 44)}<div>Aún no hay ingredientes registrados.</div></div>`}
+            </div>
+          `}
         </div>`;
+      $$("[data-pzmode]", body).forEach(btn => btn.addEventListener("click", (e) => {
+        const card = e.currentTarget;
+        const m = card.dataset.pzmode;
+        sel.modoIngChoice = m;
+        if (m === "base") {
+          sel.ingMode = {};
+          modoMitad = false;
+        } else if (m === "entera") {
+          modoMitad = false;
+          if (Object.keys(sel.ingMode).length === 0 && (p.receta || []).length) {
+            (p.receta || []).forEach(iid => { sel.ingMode[iid] = "entera"; });
+          }
+        } else if (m === "mitad") {
+          modoMitad = true;
+          if (Object.keys(sel.ingMode).length === 0 && (p.receta || []).length) {
+            (p.receta || []).forEach(iid => { sel.ingMode[iid] = "entera"; });
+          }
+        }
+        renderPaso();
+      }));
       $$("[data-i]", body).forEach(b => b.addEventListener("click", () => {
         const iid = +b.dataset.i, v = b.dataset.v;
         if (v === "") delete sel.ingMode[iid]; else sel.ingMode[iid] = v;
-        renderPaso();
-      }));
-      $$("[data-dist]", body).forEach(b => b.addEventListener("click", () => {
-        modoMitad = b.dataset.dist === "mitad";
-        if (!modoMitad) {
-          Object.keys(sel.ingMode).forEach(iid => { sel.ingMode[iid] = "entera"; });
-        }
         renderPaso();
       }));
     } else {
@@ -875,6 +940,9 @@ function abrirPizzaBuilder(productoId, indiceEdicion = null, desdeCero = false) 
         }
         return uniq.map(n).filter(Boolean).join(", ");
       };
+      const reglaIng = state.reglaIngredientes || {};
+      const esPorCantidad = reglaIng.modo === "por_cantidad";
+      const costExtra = recargoIngredientes();
       body.innerHTML = `
         <div class="pizza-sec">
           <div class="resumen-row"><span>${icon("pizza")}Tamaño</span><strong>${sel.tamano[0].toUpperCase() + sel.tamano.slice(1)} · ${money(precioBase())}</strong></div>
@@ -883,7 +951,7 @@ function abrirPizzaBuilder(productoId, indiceEdicion = null, desdeCero = false) 
             return o ? `<div class="resumen-row"><span>${esc(g.nombre)}</span><strong>${esc(o.nombre)}${o.recargo ? ` · ${money(o.recargo)}` : ""}</strong></div>` : "";
           }).join("")}
           <div class="resumen-row"><span>${icon("egg")}Ingredientes</span><strong style="text-align:right">${esc(persNombres())}</strong></div>
-          ${ingredientesExtras().length ? `<div class="resumen-row"><span>Extras</span><strong>${esc(ingredientesExtras().map(id => (ingredientes.find(i => i.id === id) || {}).nombre).filter(Boolean).join(", "))}</strong></div>` : ""}
+          ${ingredientesExtras().length ? `<div class="resumen-row"><span>Extras ${esPorCantidad ? `(${ingredientesExtras().length} toppings · ${costExtra > 0 ? `+${money(costExtra)}` : 'incluidos'})` : ''}</span><strong style="text-align:right">${esc(ingredientesExtras().map(id => (ingredientes.find(i => i.id === id) || {}).nombre).filter(Boolean).join(", "))}${!esPorCantidad && costExtra > 0 ? ` · +${money(costExtra)}` : ''}</strong></div>` : ""}
           ${recargoMitad() ? `<div class="resumen-row"><span>Mitad y mitad</span><strong>+ ${money(recargoMitad())}</strong></div>` : ""}
           <div class="opt-group">
             <div class="opt-label">Cantidad</div>
@@ -1133,11 +1201,15 @@ function abrirModalConfirmar() {
     if (state.pedido.tipo === "domicilio") { payload.direccion = leer("mc-dir"); payload.telefono = leer("mc-tel"); payload.cliente_nombre = leer("mc-nombre") || "Domicilio"; }
     if (state.pedido.tipo === "llevar") { payload.cliente_nombre = leer("mc-nombre") || "Para llevar"; }
     payload.nota = leer("mc-nota");
+    const limpiarCarrito = () => {
+      state.carrito = [];
+      state.pedido = { tipo: "salon", metodo_pago: "efectivo", cliente_nombre: "", mesa: "", direccion: "", telefono: "", nota: "" };
+      renderCategorias();
+    };
     const confirmar = async r => {
       toast(`Comanda ${r.folio} registrada`);
       beep(660, 0.12); beep(880, 0.15, 0.15);
-      state.carrito = [];
-      state.pedido = { tipo: "salon", metodo_pago: "efectivo", cliente_nombre: "", mesa: "", direccion: "", telefono: "", nota: "" };
+      limpiarCarrito();
       modal.remove();
       setTab("cocina");
       updateBadge();
@@ -1150,6 +1222,7 @@ function abrirModalConfirmar() {
       encolarAccion({ tipo: "pedido", tempId, folio, payload, callback: confirmar });
       // El card local aparecerá tras el próximo flush; por ahora avisamos.
       toast(`Sin conexión: pedido ${folio} guardado para enviar`, "warn");
+      limpiarCarrito();
       modal.remove();
       setTab("cocina");
       return;
@@ -1208,36 +1281,60 @@ function renderCocina() {
       </div>`}`;
   bindTarjetas();
 }
+function renderConfigChips(cfgStr) {
+  if (!cfgStr) return "";
+  const partes = cfgStr.split(/\s*·\s*/);
+  const chipsHtml = partes.map(p => {
+    let bgStyle = "background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;";
+    if (/tamaño/i.test(p)) {
+      bgStyle = "background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;";
+    } else if (/orilla|masa/i.test(p)) {
+      bgStyle = "background:#fff7ed;color:#9a3412;border:1px solid #ffedd5;";
+    } else if (/ingredientes|personalizada|mitad/i.test(p)) {
+      bgStyle = "background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;";
+    } else if (/extras/i.test(p)) {
+      bgStyle = "background:#fefce8;color:#854d0e;border:1px solid #fef08a;";
+    } else if (/sin/i.test(p)) {
+      bgStyle = "background:#fef2f2;color:#991b1b;border:1px solid #fecaca;";
+    }
+    return `<span class="cfg-chip" style="${bgStyle}">${esc(p)}</span>`;
+  }).join("");
+  return `<div class="cfg-chips-wrap">${chipsHtml}</div>`;
+}
+
 function tarjetaComanda(p) {
   const edad = p.edad_local;
   const clase = edad > state.umbralMin * 60 ? "crit" : edad > state.umbralWarn * 60 ? "warn" : "ok";
   const tipoTxt = { salon: "En salón", llevar: "Para recoger", domicilio: "A domicilio" }[p.tipo] || p.tipo;
+  const tipoIcon = { salon: "store", llevar: "bag", domicilio: "home" }[p.tipo] || "cart";
   return `
     <div class="order-card ${clase} ${p.estado === "entregado" ? "entregado" : ""}" data-id="${p.id}">
       <div class="order-head">
-        <div>
+        <div class="order-head-top">
           <div class="order-folio">${esc(p.folio)}</div>
-          <div class="order-meta">
-            ${p.mesa ? `<span class="table-chip">${icon("store")}Mesa ${esc(p.mesa)}</span>` : ""}
-            ${esc(tipoTxt)} · ${esc(p.cliente_nombre)}${p.direccion ? " · " + icon("home") + esc(p.direccion) : ""}
+          <div class="timer-wrap">
+            <div class="timer" data-timer="${p.id}" data-base="${Math.floor(Date.now() / 1000) - edad}">--</div>
+            <span class="status-pill ${p.estado}">${estadoTxt(p.estado)}</span>
           </div>
-          ${p.repartidor_nombre ? `<div class="order-meta">${icon("people")} Repartidor: <strong>${esc(p.repartidor_nombre)}</strong></div>` : ""}
-          ${p.nota ? `<div class="order-meta" style="color:var(--rojo)">${icon("edit")} ${esc(p.nota)}</div>` : ""}
         </div>
-        <div class="timer-wrap">
-          <div class="timer" data-timer="${p.id}" data-base="${Math.floor(Date.now() / 1000) - edad}">--</div>
-          <div><span class="status-pill ${p.estado}">${estadoTxt(p.estado)}</span></div>
+        <div class="order-meta-box">
+          <span class="order-type-chip">${icon(tipoIcon, 14)}${esc(tipoTxt)}</span>
+          ${p.mesa ? `<span class="table-chip">${icon("store", 14)}Mesa ${esc(p.mesa)}</span>` : ""}
+          <span style="font-weight:700">${esc(p.cliente_nombre)}</span>
+          ${p.direccion ? `<span>· ${icon("home", 14)}${esc(p.direccion)}</span>` : ""}
         </div>
+        ${p.repartidor_nombre ? `<div class="order-meta" style="color:var(--azul);font-weight:700;margin-top:2px">${icon("people", 14)} Repartidor: ${esc(p.repartidor_nombre)}</div>` : ""}
+        ${p.nota ? `<div class="order-meta" style="color:var(--rojo);font-weight:700;margin-top:2px">${icon("edit", 14)} Nota: ${esc(p.nota)}</div>` : ""}
       </div>
       <div class="order-items">
         ${p.items.map(it => `
           <div class="order-item">
             <div class="ln1">
-              <span style="color:var(--rojo);font-weight:900">${it.cantidad}×</span>
+              <span class="qty-badge">${it.cantidad}×</span>
               <span>${esc(it.producto_nombre)}</span>
               <span style="margin-left:auto;font-weight:800">${money(it.subtotal)}</span>
             </div>
-            ${it.configuracion ? `<div class="cfg">${esc(it.configuracion)}</div>` : ""}
+            ${renderConfigChips(it.configuracion)}
           </div>`).join("")}
       </div>
       <div class="order-actions">
@@ -1456,10 +1553,16 @@ async function loadMenu() {
       </div>
       ${catalogo.length === 0 ? `
         <div class="card kitchen-empty">${icon("menu", 56)}<div style="font-size:16px;font-weight:700">Aún no tienes categorías</div>
-        <div style="margin-top:4px;color:var(--gris-400)">Crea tu primera categoría para empezar a armar tu menú</div></div>` : catalogo.map(c => `
+        <div style="margin-top:4px;color:var(--gris-400)">Crea tu primera categoría para empezar a armar tu menú</div></div>` : catalogo.map(c => {
+          const esPizzaCat = esCategoriaPizza(c.categoria);
+          return `
         <div class="card ${c.categoria.activa === 0 ? "cat-oculta" : ""}" style="margin-bottom:16px" data-catcard="${c.categoria.id}">
           <div class="modal-head">
-            <h3>${esc(c.categoria.nombre)} (${c.productos.length})${c.categoria.activa === 0 ? ` <span class="status-pill cancelado" style="background:#fde8e8;color:var(--rojo);font-size:11px">Oculta</span>` : ""}</h3>
+            <div style="display:flex;align-items:center;gap:8px">
+              <h3>${esc(c.categoria.nombre)} (${c.productos.length})</h3>
+              ${esPizzaCat ? '<span class="status-pill" style="background:#e8f4fd;color:var(--azul);font-size:11px">🍕 Pizzas</span>' : '<span class="status-pill" style="background:#f2f3f6;color:var(--gris-500);font-size:11px">🍔 General</span>'}
+              ${c.categoria.activa === 0 ? ` <span class="status-pill cancelado" style="background:#fde8e8;color:var(--rojo);font-size:11px">Oculta</span>` : ""}
+            </div>
             <div style="display:flex;gap:6px">
               <button class="btn btn-sm btn-ghost" data-editcat="${c.categoria.id}">${icon("edit")}Editar</button>
               ${c.categoria.activa === 0
@@ -1469,7 +1572,7 @@ async function loadMenu() {
           </div>
           <div class="table-wrap">
             <table class="data">
-              <thead><tr><th>Producto</th><th>Precio base</th><th>Ingredientes base</th><th></th></tr></thead>
+              <thead><tr><th>Producto</th><th>Precio base</th><th>Descripción / Receta</th><th></th></tr></thead>
               <tbody>${c.productos.map(p => `
                 <tr class="${p.activo === 0 ? "inactivo" : ""}">
                   <td style="font-weight:700">${esc(p.nombre)}${p.personalizable === 1 ? ` <span class="status-pill" style="background:#fff3cd;color:#8a6d1a;font-size:11px">Pizza personalizable</span>` : ""}${p.activo === 0 ? ` <span class="status-pill cancelado" style="background:#fde8e8;color:var(--rojo);font-size:11px">Oculto</span>` : ""}</td>
@@ -1485,10 +1588,11 @@ async function loadMenu() {
             </table>
           </div>
           <div style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <span class="opt-label" style="margin:0">Grupos de opciones</span>
+            <span class="opt-label" style="margin:0">Grupos de opciones / Extras</span>
             <button class="btn btn-sm btn-ghost" data-nuevogrupo="${c.categoria.id}">${icon("plus")}Agregar grupo</button>
-            ${/pizza/i.test(c.categoria.nombre) ? `<button class="btn btn-sm btn-ghost" data-reglamitad>${icon("motor")}Precio mitad y mitad</button>` : ""}
-            ${!c.opciones.length ? `<button class="btn btn-sm" data-plantilla="${c.categoria.id}">${icon("wand")}Crear plantilla Tamaño + Orilla</button>` : ""}
+            ${esPizzaCat ? `<button class="btn btn-sm btn-ghost" data-reglamitad>${icon("motor")}Precio mitad y mitad</button>` : ""}
+            ${esPizzaCat ? `<button class="btn btn-sm btn-ghost" data-reglaing>${icon("wand")}Regla ingredientes extra</button>` : ""}
+            ${esPizzaCat && !c.opciones.length ? `<button class="btn btn-sm" data-plantilla="${c.categoria.id}">${icon("wand")}Crear plantilla Tamaño + Orilla</button>` : ""}
           </div>
           ${c.opciones.map(g => `
             <div style="margin-top:10px" class="grupo-opciones">
@@ -1515,7 +1619,8 @@ async function loadMenu() {
               <input type="number" step="0.5" value="${state.precioCombinado ?? 15}" data-recargocomb style="width:90px;border:1.5px solid var(--gris-200);border-radius:8px;padding:6px 8px;font-weight:700;text-align:right">
               <span style="color:var(--gris-500);font-size:12px">Se suma cuando una pizza personalizable es "Combinado" con 2+ ingredientes</span>
             </div>` : ""}
-        </div>`).join("")}`;
+        </div>`;
+        }).join("")}`;
     $$(".precio-input", v).forEach(inp => inp.addEventListener("change", async () => {
       const v2 = parseFloat(inp.value);
       if (isNaN(v2)) return;
@@ -1533,6 +1638,7 @@ async function loadMenu() {
       toast("Recargo combinado actualizado", "ok");
     }));
     $$("[data-reglamitad]", v).forEach(b => b.addEventListener("click", modalReglaMitad));
+    $$("[data-reglaing]", v).forEach(b => b.addEventListener("click", modalReglaIngredientes));
     $$("[data-editprod]", v).forEach(b => b.addEventListener("click", () => {
       const pid = +b.dataset.editprod;
       const p = catalogo.flatMap(c => c.productos).find(x => x.id === pid);
@@ -1619,10 +1725,23 @@ function modalFormCategoria(cat) {
   const esEdicion = !!cat;
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
+  let tipo = esEdicion ? (cat.tipo || (esCategoriaPizza(cat) ? "pizza" : "regular")) : "pizza";
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-head"><h3>${esEdicion ? "Editar categoría" : "Nueva categoría"}</h3><button class="modal-close" id="nc2-close">${icon("close")}</button></div>
-      <div class="field"><label>Nombre</label><input id="nc2-nombre" value="${esEdicion ? esc(cat.nombre) : ""}" placeholder="Ej: Hamburguesas"></div>
+      <div class="field"><label>Nombre de la categoría</label><input id="nc2-nombre" value="${esEdicion ? esc(cat.nombre) : ""}" placeholder="Ej: Pizzas, Hamburguesas, Bebidas"></div>
+      <div class="field"><label>¿Qué tipo de categoría es?</label>
+        <div class="cat-type-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
+          <button type="button" class="type-card ${tipo === "pizza" ? "selected" : ""}" data-type="pizza" style="padding:12px;border:2px solid var(--gris-200);border-radius:10px;background:var(--blanco);cursor:pointer;text-align:left">
+            <div style="font-size:16px;font-weight:700;margin-bottom:4px">🍕 Pizzas</div>
+            <div style="font-size:12px;color:var(--gris-500)">Permite configurador de tamaños, orillas y mitades/toppings.</div>
+          </button>
+          <button type="button" class="type-card ${tipo === "regular" ? "selected" : ""}" data-type="regular" style="padding:12px;border:2px solid var(--gris-200);border-radius:10px;background:var(--blanco);cursor:pointer;text-align:left">
+            <div style="font-size:16px;font-weight:700;margin-bottom:4px">🍔 General / Otro</div>
+            <div style="font-size:12px;color:var(--gris-500)">Para hamburguesas, entradas, postres y bebidas.</div>
+          </button>
+        </div>
+      </div>
       <div class="field"><label>Ícono</label><div id="nc2-icons" class="prod-icon-grid"></div></div>
       <div class="modal-foot">
         <button class="btn ghost" id="nc2-cancel">Cancelar</button>
@@ -1630,19 +1749,24 @@ function modalFormCategoria(cat) {
       </div>
     </div>`;
   $("#modal-root").appendChild(modal);
-  let icono = esEdicion ? cat.icono : "burger";
+  let icono = esEdicion ? cat.icono : "pizza";
   renderIconPicker("nc2-icons", modal, n => { icono = n; }, esEdicion ? cat.icono : undefined);
+  $$(".type-card", modal).forEach(btn => btn.onclick = () => {
+    $$(".type-card", modal).forEach(b => b.classList.remove("selected"));
+    btn.classList.add("selected");
+    tipo = btn.dataset.type;
+  });
   $("#nc2-close", modal).onclick = $("#nc2-cancel", modal).onclick = () => modal.remove();
   $("#nc2-save", modal).onclick = async () => {
     const nombre = $("#nc2-nombre", modal).value.trim();
     if (!nombre) return toast("Escribe el nombre de la categoría", "warn");
     try {
       if (esEdicion) {
-        await api("/menu/categorias/" + cat.id, "PUT", { nombre, icono });
+        await api("/menu/categorias/" + cat.id, "PUT", { nombre, icono, tipo });
         toast(`Categoría "${nombre}" actualizada`);
       } else {
         const orden = (state.menu.length + 1);
-        await api("/menu/categorias", "POST", { nombre, icono, orden });
+        await api("/menu/categorias", "POST", { nombre, icono, tipo, orden });
         toast(`Categoría "${nombre}" creada`);
       }
       modal.remove();
@@ -1726,31 +1850,87 @@ function modalReglaMitad() {
   };
 }
 
+function modalReglaIngredientes() {
+  const regla = state.reglaIngredientes || { modo: "individual", incluidos: 0, recargo_extra: 0 };
+  const modal = document.createElement("div");
+  modal.className = "modal-backdrop";
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-head"><h3>Regla de ingredientes extra en pizzas</h3><button class="modal-close" id="ri-close">${icon("close")}</button></div>
+      <p class="pizza-help">Configura cómo cobrar los ingredientes adicionales o toppings en pizzas personalizadas.</p>
+      <div class="field"><label>Modelo de cobro</label>
+        <select id="ri-modo">
+          <option value="individual" ${regla.modo === "individual" ? "selected" : ""}>Cobro individual (según recargo de cada ingrediente)</option>
+          <option value="por_cantidad" ${regla.modo === "por_cantidad" ? "selected" : ""}>Cobro por cantidad (N primeros incluidos gratis + cargo por extra)</option>
+        </select>
+      </div>
+      <div id="ri-valores"></div>
+      <div class="modal-foot"><button class="btn ghost" id="ri-cancel">Cancelar</button><button class="btn btn-primary" id="ri-save">${icon("check")}Guardar regla</button></div>
+    </div>`;
+  $("#modal-root").appendChild(modal);
+  function valores() {
+    const modo = $("#ri-modo", modal).value;
+    const inc = regla.incluidos != null ? regla.incluidos : 2;
+    const rec = regla.recargo_extra != null ? regla.recargo_extra : 10;
+    $("#ri-valores", modal).innerHTML = modo === "por_cantidad" ? `
+      <div class="field"><label>Ingredientes incluidos en el precio base</label>
+        <input id="ri-incluidos" type="number" min="0" step="1" value="${inc}" placeholder="Ej: 2" style="width:100%;border:1.5px solid var(--gris-200);border-radius:8px;padding:8px 10px;font-weight:700">
+        <div style="color:var(--gris-500);font-size:12px;margin-top:4px">Estos primeros ingredientes no generan ningún costo extra al cliente.</div>
+      </div>
+      <div class="field"><label>Recargo por cada ingrediente adicional $</label>
+        <input id="ri-recargo" type="number" min="0" step="0.5" value="${rec}" placeholder="Ej: 10" style="width:100%;border:1.5px solid var(--gris-200);border-radius:8px;padding:8px 10px;font-weight:700">
+        <div style="color:var(--gris-500);font-size:12px;margin-top:4px">Se sumará este monto fijo por cada ingrediente a partir del siguiente al límite incluido.</div>
+      </div>
+      <div class="card" style="background:var(--gris-100);padding:12px;border-radius:8px;font-size:12.5px;color:var(--gris-600);margin-top:8px">
+        <strong>Ejemplo:</strong> Con ${inc} incluidos y +$${rec} c/u extra:<br>
+        • 1 a ${inc} ingredientes → $0 extra<br>
+        • ${inc + 1} ingredientes → +$${rec}<br>
+        • ${inc + 2} ingredientes → +$${rec * 2}
+      </div>` : `<div class="pizza-help">Cada ingrediente sumará el recargo asignado en el módulo de Ingredientes.</div>`;
+  }
+  valores();
+  $("#ri-modo", modal).onchange = valores;
+  $("#ri-close", modal).onclick = $("#ri-cancel", modal).onclick = () => modal.remove();
+  $("#ri-save", modal).onclick = async () => {
+    const modo = $("#ri-modo", modal).value;
+    const incluidos = parseInt($("#ri-incluidos", modal)?.value, 10) || 0;
+    const recargo_extra = parseFloat($("#ri-recargo", modal)?.value) || 0;
+    const nueva = { modo, incluidos, recargo_extra };
+    try {
+      state.reglaIngredientes = await api("/menu/config/regla-ingredientes", "PUT", nueva);
+      toast("Regla de ingredientes actualizada");
+      modal.remove();
+      loadMenu();
+    } catch (e) { toast("Error: " + e.message, "error"); }
+  };
+}
+
 function modalEditarProducto(p) {
   const modal = document.createElement("div");
   modal.className = "modal-backdrop";
   const precios = p.precios || {};
   const TAMANOS = ["individual", "chica", "mediana", "grande"];
-  const esPizza = /pizza/i.test((state.categorias.find(c => c.id === p.categoria_id) || {}).nombre || "");
+  const esPizza = esCategoriaPizza(state.categorias.find(c => c.id === p.categoria_id));
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-head"><h3>Editar producto</h3><button class="modal-close" id="ep-close">${icon("close")}</button></div>
       <div class="field"><label>Nombre</label><input id="ep-nombre" value="${esc(p.nombre)}"></div>
       <div class="field"><label>Descripción</label><input id="ep-desc" value="${esc(p.descripcion)}"></div>
       <div class="field"><label>Precio base</label><input id="ep-precio" type="number" step="0.5" value="${p.precio_base}"></div>
+      ${esPizza ? `
       <div class="field">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="ep-pers" ${p.personalizable === 1 ? "checked" : ""} style="width:18px;height:18px">
           Pizza personalizable (mitad y mitad / combinado)
         </label>
-        <div style="color:var(--gris-500);font-size:12px;margin-top:4px">Permite elegir ingredientes por mitad y la categoría debe tener grupos como Tamaño u Orilla.</div>
-      </div>
+        <div style="color:var(--gris-500);font-size:12px;margin-top:4px">Permite elegir ingredientes por mitad o revueltos al tomar el pedido.</div>
+      </div>` : `<input type="checkbox" id="ep-pers" style="display:none">`}
       <div class="field" id="ep-precios-field" ${esPizza ? "" : 'style="display:none"'}>
-        <label>Precios por tamaño (constructor Domino's)</label>
+        <label>Precios por tamaño (Individual / Chica / Mediana / Grande)</label>
         <div class="tam-grid">
           ${TAMANOS.map(t => `<div><span style="font-size:12px;font-weight:700;color:var(--gris-500)">${t[0].toUpperCase() + t.slice(1)}</span><input class="ep-precio-t" data-t="${t}" type="number" step="0.5" value="${precios[t] != null ? precios[t] : ""}" placeholder="${p.precio_base}" style="width:100%;margin-top:4px;border:1.5px solid var(--gris-200);border-radius:8px;padding:8px 10px;font-weight:700"></div>`).join("")}
         </div>
-        <div style="color:var(--gris-500);font-size:12px;margin-top:6px">Vacío usa el precio base. Solo se usa en el constructor de pizza.</div>
+        <div style="color:var(--gris-500);font-size:12px;margin-top:6px">Dejar vacío si usa el precio base.</div>
       </div>
       <div class="field" id="ep-receta-field" ${esPizza ? "" : 'style="display:none"'}>
         <label>Receta base (ingredientes que vienen incluidos)</label>
@@ -1769,13 +1949,12 @@ function modalEditarProducto(p) {
     </div>`;
   $("#modal-root").appendChild(modal);
   function togglePizzaFields() {
-    const show = $("#ep-pers", modal).checked || esPizza;
-    $("#ep-precios-field", modal).style.display = show ? "" : "none";
-    $("#ep-receta-field", modal).style.display = show ? "" : "none";
+    const show = $("#ep-pers", modal)?.checked || esPizza;
+    if ($("#ep-precios-field", modal)) $("#ep-precios-field", modal).style.display = show ? "" : "none";
+    if ($("#ep-receta-field", modal)) $("#ep-receta-field", modal).style.display = show ? "" : "none";
   }
-  $("#ep-pers", modal).addEventListener("change", togglePizzaFields);
+  if ($("#ep-pers", modal)) $("#ep-pers", modal).addEventListener("change", togglePizzaFields);
   $$("[data-reci]", modal).forEach(b => b.addEventListener("click", () => {
-    const id = +b.dataset.reci;
     b.classList.toggle("selected");
   }));
   $("#ep-close", modal).onclick = $("#ep-cancel", modal).onclick = () => modal.remove();
@@ -1783,9 +1962,9 @@ function modalEditarProducto(p) {
     const nombre = $("#ep-nombre", modal).value.trim();
     const descripcion = $("#ep-desc", modal).value.trim();
     const precio_base = parseFloat($("#ep-precio", modal).value) || 0;
-    const personalizable = $("#ep-pers", modal).checked ? 1 : 0;
+    const personalizable = $("#ep-pers", modal)?.checked ? 1 : 0;
     if (!nombre) return toast("Escribe el nombre", "warn");
-    const show = $("#ep-pers", modal).checked || esPizza;
+    const show = esPizza;
     const precios = {};
     if (show) {
       TAMANOS.forEach(t => {
@@ -1809,22 +1988,22 @@ function modalNuevoProducto() {
   modal.className = "modal-backdrop";
   const TAMANOS = ["individual", "chica", "mediana", "grande"];
   let catId = state.categorias[0]?.id;
-  const esPizza = () => /pizza/i.test((state.categorias.find(c => c.id === +$("#np-cat", modal)?.value) || {}).nombre || "");
+  const esPizza = () => esCategoriaPizza(state.categorias.find(c => c.id === +$("#np-cat", modal)?.value));
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-head"><h3>Nuevo producto</h3><button class="modal-close" id="np-close">${icon("close")}</button></div>
       <div class="field"><label>Categoría</label><select id="np-cat">${state.categorias.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join("")}</select></div>
-      <div class="field"><label>Nombre</label><input id="np-nombre" placeholder="Ej: Pizza de pastor"></div>
-      <div class="field"><label>Descripción</label><input id="np-desc" placeholder="Ingredientes incluidos"></div>
+      <div class="field"><label>Nombre</label><input id="np-nombre" placeholder="Ej: Pizza de pastor / Hamburguesa doble"></div>
+      <div class="field"><label>Descripción</label><input id="np-desc" placeholder="Descripción o ingredientes incluidos"></div>
       <div class="field"><label>Precio base</label><input id="np-precio" type="number" step="0.5" value="60"></div>
-      <div class="field">
+      <div class="field" id="np-pers-field">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="np-pers" style="width:18px;height:18px">
           Pizza personalizable (mitad y mitad / combinado)
         </label>
       </div>
       <div class="field" id="np-precios-field" style="display:none">
-        <label>Precios por tamaño (constructor Domino's)</label>
+        <label>Precios por tamaño (Individual / Chica / Mediana / Grande)</label>
         <div class="tam-grid">
           ${TAMANOS.map(t => `<div><span style="font-size:12px;font-weight:700;color:var(--gris-500)">${t[0].toUpperCase() + t.slice(1)}</span><input class="np-precio-t" data-t="${t}" type="number" step="0.5" placeholder="Precio base" style="width:100%;margin-top:4px;border:1.5px solid var(--gris-200);border-radius:8px;padding:8px 10px;font-weight:700"></div>`).join("")}
         </div>
@@ -1846,10 +2025,13 @@ function modalNuevoProducto() {
     </div>`;
   $("#modal-root").appendChild(modal);
   function togglePizzaFields() {
-    const show = $("#np-pers", modal).checked || esPizza();
+    const isP = esPizza();
+    $("#np-pers-field", modal).style.display = isP ? "" : "none";
+    const show = isP || $("#np-pers", modal).checked;
     $("#np-precios-field", modal).style.display = show ? "" : "none";
     $("#np-receta-field", modal).style.display = show ? "" : "none";
   }
+  togglePizzaFields();
   $("#np-pers", modal).addEventListener("change", togglePizzaFields);
   $("#np-cat", modal).addEventListener("change", togglePizzaFields);
   $$("[data-reci]", modal).forEach(b => b.addEventListener("click", () => b.classList.toggle("selected")));

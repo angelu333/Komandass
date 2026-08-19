@@ -40,7 +40,7 @@ app/
 ```
 - `app/domain/` aloja módulos puros (reglas): `pedidos.py` (estados/transiciones), `precios.py` (cálculo y descripción).
 
-Esquema SQL: `supabase_schema.sql` (base) + `migracion_pizza.sql` (columnas `pizza`, `personalizable`, tabla `config`) + `migracion_precios_pizza.sql` (columna `precios`).
+Esquema SQL: `sql/supabase_schema.sql` (base) + `sql/migracion_pizza.sql` (columnas `pizza`, `personalizable`, tabla `config`) + `sql/migracion_precios_pizza.sql` (columna `precios`) + `sql/migracion_estados_repartidores.sql`.
 
 ---
 

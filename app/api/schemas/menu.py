@@ -4,6 +4,7 @@ from pydantic import BaseModel
 class CategoriaCreate(BaseModel):
     nombre: str
     icono: str = "plate"
+    tipo: str = "regular"
     orden: int = 0
     activa: int = 1
 
@@ -11,6 +12,7 @@ class CategoriaCreate(BaseModel):
 class CategoriaUpdate(BaseModel):
     nombre: str | None = None
     icono: str | None = None
+    tipo: str | None = None
     orden: int | None = None
     activa: int | None = None
 
@@ -64,3 +66,10 @@ class ReglaMitad(BaseModel):
     modo: str = "sin_cargo"
     valor: float = 0
     precios: dict = {}
+
+
+class ReglaIngredientes(BaseModel):
+    modo: str = "individual"  # "individual" o "por_cantidad"
+    incluidos: int = 0
+    recargo_extra: float = 0.0
+

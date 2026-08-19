@@ -23,7 +23,7 @@ PASS = "Prueba123!"
 
 
 def login():
-    r = httpx.post(f"{BASE}/auth/login", json={"email": EMAIL, "password": PASS})
+    r = httpx.post(f"{BASE}/auth/login", json={"email": EMAIL, "password": PASS}, timeout=30.0)
     if r.status_code != 200:
         return None
     return r.json()
@@ -86,7 +86,7 @@ def main():
 
     # --- ingredientes ---
     ing1 = api("POST", "/ingredientes", json={"nombre": "Champion DOM-E2E", "recargo": 5, "pizza": 1}).json()["id"]
-    ing2 = api("POST", "/ingredientes", json={"nombre": "Pina DOM-E2E", "recargo": 5, "pizza": 1}).json()["id"]
+    ing2 = api("POST", "/ingredientes", json={"nombre": "Pina DOM-E2E", "recargo": 0, "pizza": 1}).json()["id"]
     print(f"ingredientes: {ing1}, {ing2}")
 
     # --- grupo Orilla ---
