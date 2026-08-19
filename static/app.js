@@ -173,6 +173,7 @@ function alertaCritica() {
 const VIEWS = ["pedir", "cocina", "historial", "menu", "ingredientes", "clientes", "reportes"];
 function setTab(tab) {
   state.tab = tab;
+  cerrarMenu();
   $$(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
   VIEWS.forEach(v => $("#view-" + v).classList.toggle("active", v === tab));
   if (tab === "pedir") renderCategoriasGrid();
@@ -188,11 +189,25 @@ $("#nav").addEventListener("click", e => {
   if (btn) setTab(btn.dataset.tab);
 });
 
+/* ============ MENÚ MÓVIL (hamburguesa) ============ */
+function abrirMenu() { $("#app").classList.add("menu-open"); }
+function cerrarMenu() { $("#app").classList.remove("menu-open"); }
+$("#btn-menu").addEventListener("click", () => {
+  $("#app").classList.toggle("menu-open");
+});
+$("#menu-overlay").addEventListener("click", cerrarMenu);
+window.addEventListener("resize", () => {
+  if (window.innerWidth > 860) cerrarMenu();
+});
+
 /* ============ RELOJ ============ */
 setInterval(() => {
   const d = new Date();
+  const t = d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
   const el = $("#clock");
-  if (el) el.textContent = d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+  if (el) el.textContent = t;
+  const elM = $("#clock-m");
+  if (elM) elM.textContent = t;
 }, 1000);
 
 /* ============ AUTH GATEWAY ============ */
@@ -208,6 +223,7 @@ async function cargarApp() {
   renderNavIcons();
   $("#brand-icon").innerHTML = icon("favicon");
   $("#brand-name").textContent = state.negocio ? state.negocio.nombre : "Comandas";
+  $("#brand-name-m").textContent = $("#brand-name").textContent;
   $("#brand-sub").textContent = state.negocio ? "Sistema multinegocio" : "";
   solicitarWakeLock();
   bootstrap();
@@ -334,6 +350,7 @@ function modalConfigNegocio() {
       await api("/restaurantes/" + state.negocio.id, "PUT", { nombre, telefono, direccion });
       state.negocio = { ...state.negocio, nombre, telefono, direccion };
       $("#brand-name").textContent = state.negocio.nombre;
+      $("#brand-name-m").textContent = state.negocio.nombre;
       toast("Negocio actualizado");
       modal.remove();
     } catch (e) { toast("Error: " + e.message, "error"); }
