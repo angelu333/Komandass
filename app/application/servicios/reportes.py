@@ -109,3 +109,72 @@ def ventas_rango(rid: int, dias: int = 30):
         por_dia[d]["n"] += 1
     datos = [por_dia[k] for k in sorted(por_dia.keys())]
     return {"inicio": inicio_fecha, "fin": hoy_fecha, "datos": datos}
+
+
+def exportar_pedidos_rango(rid: int, dias: int = 7):
+    """Devuelve lista detallada de pedidos (no cancelados) del rango para exportar."""
+    hoy = datetime.now().astimezone()
+    inicio_fecha = (hoy - timedelta(days=dias - 1)).strftime("%Y-%m-%d")
+    hoy_fecha = hoy.strftime("%Y-%m-%d")
+    inicio = _iso_local(inicio_fecha, "inicio")
+    fin = _iso_local(hoy_fecha, "fin")
+
+    data, _ = repo.select("pedidos", restaurante_id=rid,
+                          gte={"creado_en": inicio}, lte={"creado_en": fin},
+                          order="creado_en", desc=False)
+    pedidos = [p for p in data if p["estado"] != "cancelado"]
+
+    # Enriquecer con detalles de items
+    resultado = []
+    for p in pedidos:
+        dets, _ = repo.select("detalle_pedido", eq={"pedido_id": p["id"]},
+                              columns="producto_nombre,cantidad,subtotal,configuracion")
+        items_txt = "; ".join(
+            f"{d['cantidad']}× {d['producto_nombre']}" +
+            (f" ({d['configuracion']})" if d.get("configuracion") else "")
+            for d in dets
+        )
+        resultado.append({
+            "folio": p.get("folio", ""),
+            "fecha": _dia(p["creado_en"]),
+            "hora": str(p["creado_en"])[11:16],
+            "cliente": p.get("cliente_nombre", ""),
+            "tipo": p.get("tipo", ""),
+            "estado": p.get("estado", ""),
+            "metodo_pago": p.get("metodo_pago", ""),
+            "repartidor": p.get("repartidor_nombre", "") or "",
+            "items": items_txt,
+            "total": p.get("total", 0),
+        })
+
+    total_general = round(sum(p["total"] for p in resultado), 2)
+    return {
+        "inicio": inicio_fecha,
+        "fin": hoy_fecha,
+        "dias": dias,
+        "total_general": total_general,
+        "pedidos": resultado,
+    }
+
+
+def limpiar_historial(rid: int, antes_de: str):
+    """Elimina pedidos entregados o cancelados anteriores a 'antes_de' (YYYY-MM-DD).
+    Devuelve el número de pedidos eliminados. Los pedidos activos nunca se tocan.
+    """
+    fin = _iso_local(antes_de, "fin")
+    data, _ = repo.select(
+        "pedidos", restaurante_id=rid,
+        lte={"creado_en": fin},
+        columns="id,estado",
+    )
+    ids_a_borrar = [p["id"] for p in data if p["estado"] in ("entregado", "cancelado")]
+    if not ids_a_borrar:
+        return {"eliminados": 0}
+
+    for pid in ids_a_borrar:
+        repo.delete("detalle_pedido", eq={"pedido_id": pid})
+    for pid in ids_a_borrar:
+        repo.delete("pedidos", eq={"id": pid, "restaurante_id": rid})
+
+    return {"eliminados": len(ids_a_borrar)}
+

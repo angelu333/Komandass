@@ -22,6 +22,7 @@ const state = {
   precioCombinado: 15,
   reglaMitad: { modo: "sin_cargo", valor: 0, precios: {} },
   reglaIngredientes: { modo: "individual", incluidos: 0, recargo_extra: 0 },
+  reporteDescargado: false,   // se pone en true al descargar CSV o PDF en la sesión
 };
 
 const guardarToken = t => { state.token = t; t ? localStorage.setItem("ctoken", t) : localStorage.removeItem("ctoken"); };
@@ -2389,11 +2390,175 @@ async function loadReportes(dias = 30) {
             </tbody>
           </table>
         </div>
+      </div>
+      <div class="card report-actions">
+        <div class="modal-head"><h3>${icon("download")} Exportar y gestión de historial</h3></div>
+        <div style="color:var(--gris-500);font-size:13px;margin-bottom:14px">
+          Descarga el resumen de ventas del período seleccionado o limpia el historial de pedidos entregados/cancelados.
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px">
+          <button class="btn btn-blue btn-sm" id="btn-export-csv">${icon("download")} Descargar CSV</button>
+          <button class="btn btn-blue btn-sm" id="btn-export-pdf">${icon("print")} Descargar PDF</button>
+          <button class="btn btn-danger-outline btn-sm" id="btn-limpiar-hist">${icon("trash")} Limpiar historial</button>
+        </div>
       </div>`;
     $("#rango-select").onchange = e => loadReportes(+e.target.value);
     $("#imprimir-dia").onclick = () => window.print();
+    $("#btn-export-csv").onclick = () => descargarCSV(dias);
+    $("#btn-export-pdf").onclick = () => descargarPDF(dias);
+    $("#btn-limpiar-hist").onclick = () => abrirModalLimpiarHistorial(dias);
   } catch (e) { toast("Error: " + e.message, "error"); }
 }
+
+async function descargarCSV(dias = 7) {
+  try {
+    toast("Generando CSV...", "ok");
+    const data = await api(`/reportes/exportar?dias=${dias}`);
+    const filas = [
+      ["Folio","Fecha","Hora","Cliente","Tipo","Estado","Método de pago","Repartidor","Productos","Total"].join(","),
+      ...data.pedidos.map(p => [
+        `"${p.folio}"`, p.fecha, p.hora, `"${p.cliente}"`, p.tipo, p.estado,
+        p.metodo_pago, `"${p.repartidor}"`, `"${p.items.replace(/"/g, "'")}"`, p.total,
+      ].join(","))
+    ];
+    filas.push(`,,,,,,,,TOTAL,${data.total_general}`);
+    const csv = "\uFEFF" + filas.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `reporte-ventas-${data.inicio}-al-${data.fin}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    state.reporteDescargado = true;
+    toast(`CSV descargado: ${data.pedidos.length} pedidos`, "ok");
+  } catch (e) { toast("Error al generar CSV: " + e.message, "error"); }
+}
+
+async function descargarPDF(dias = 7) {
+  try {
+    toast("Generando PDF...", "ok");
+    const data = await api(`/reportes/exportar?dias=${dias}`);
+    const negocio = esc(state.negocio?.nombre || "Restaurante");
+    const fecha_gen = new Date().toLocaleDateString("es-MX", { day: "2-digit", month: "long", year: "numeric" });
+    const filas = data.pedidos.map((p, i) => `
+      <tr class="${i % 2 === 0 ? "par" : ""}">
+        <td>${esc(p.folio)}</td><td>${p.fecha}</td><td>${p.hora}</td>
+        <td>${esc(p.cliente)}</td><td style="text-transform:capitalize">${p.tipo}</td>
+        <td><span class="estado estado-${p.estado}">${p.estado}</span></td>
+        <td style="text-transform:capitalize">${p.metodo_pago}</td>
+        <td>${esc(p.repartidor || "—")}</td>
+        <td class="items">${esc(p.items)}</td>
+        <td class="money">$${(+p.total).toFixed(2)}</td>
+      </tr>`).join("");
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+      <title>Reporte de Ventas · ${negocio}</title>
+      <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; font-size: 11px; color: #1a1a2e; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px; border-bottom: 2px solid #c8102e; padding-bottom: 10px; }
+        .header h1 { font-size: 18px; font-weight: 900; color: #c8102e; }
+        .header .meta { text-align: right; color: #555; font-size: 10px; line-height: 1.6; }
+        .stats { display: flex; gap: 14px; margin-bottom: 16px; }
+        .stat-box { border: 1px solid #e2e5ea; border-radius: 8px; padding: 8px 14px; min-width: 100px; }
+        .stat-box .lbl { font-size: 9px; color: #777; text-transform: uppercase; letter-spacing: .5px; }
+        .stat-box .val { font-size: 16px; font-weight: 900; color: #1a1a2e; }
+        .stat-box .val.green { color: #12845f; }
+        table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+        th { background: #c8102e; color: #fff; padding: 6px 8px; text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .4px; }
+        td { padding: 5px 8px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+        tr.par td { background: #fafafa; }
+        .money { text-align: right; font-weight: 700; }
+        .items { font-size: 9px; color: #555; max-width: 160px; }
+        .estado { border-radius: 999px; padding: 2px 7px; font-size: 9px; font-weight: 700; }
+        .estado-entregado { background: #d1fae5; color: #065f46; }
+        .estado-cancelado { background: #fee2e2; color: #991b1b; }
+        .estado-preparacion, .estado-listo, .estado-en_camino { background: #fef3c7; color: #92400e; }
+        tfoot td { font-weight: 900; background: #f5f5f5; border-top: 2px solid #c8102e; }
+        @media print { body { padding: 10px; } }
+      </style></head><body>
+      <div class="header">
+        <div>
+          <h1>${negocio}</h1>
+          <div style="color:#555;font-size:11px;margin-top:3px">Reporte de ventas · ${data.inicio} al ${data.fin}</div>
+        </div>
+        <div class="meta">
+          <div>Generado el: ${fecha_gen}</div>
+          <div>Período: últimos ${dias} días</div>
+          <div>Total de pedidos: ${data.pedidos.length}</div>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="stat-box"><div class="lbl">Total facturado</div><div class="val green">$${data.total_general.toFixed(2)}</div></div>
+        <div class="stat-box"><div class="lbl">Pedidos</div><div class="val">${data.pedidos.length}</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Folio</th><th>Fecha</th><th>Hora</th><th>Cliente</th><th>Tipo</th><th>Estado</th><th>Pago</th><th>Repartidor</th><th>Productos</th><th>Total</th></tr></thead>
+        <tbody>${filas || "<tr><td colspan='10' style='text-align:center;color:#aaa'>Sin pedidos en el rango</td></tr>"}</tbody>
+        <tfoot><tr><td colspan="9" style="text-align:right">TOTAL GENERAL</td><td class="money">$${data.total_general.toFixed(2)}</td></tr></tfoot>
+      </table>
+      </body></html>`;
+    const win = window.open("", "_blank");
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 500);
+    state.reporteDescargado = true;
+    toast("PDF listo para imprimir/guardar", "ok");
+  } catch (e) { toast("Error al generar PDF: " + e.message, "error"); }
+}
+
+function abrirModalLimpiarHistorial(dias = 7) {
+  const hoy = new Date();
+  const hace7 = new Date(hoy);
+  hace7.setDate(hoy.getDate() - 7);
+  const fechaDefault = hace7.toISOString().slice(0, 10);
+  const warningHtml = state.reporteDescargado ? "" : `
+    <div class="report-warn">
+      ⚠️ <strong>No has descargado el resumen de ventas de esta sesión.</strong><br>
+      Te recomendamos descargarlo antes de borrar el historial.
+    </div>`;
+  const modal = document.createElement("div");
+  modal.className = "modal-backdrop";
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">${icon("trash")}<h3>Limpiar historial</h3><button class="modal-close" id="hist-close">${icon("close")}</button></div>
+      ${warningHtml}
+      <div class="pizza-help" style="margin-bottom:14px">
+        Se eliminarán permanentemente los pedidos <strong>entregados o cancelados</strong> anteriores a la fecha indicada.
+        Los pedidos activos nunca se borran.
+      </div>
+      <div class="field">
+        <label>Borrar pedidos anteriores a:</label>
+        <input type="date" id="hist-fecha" value="${fechaDefault}" max="${hoy.toISOString().slice(0, 10)}">
+      </div>
+      <div class="modal-foot" style="flex-wrap:wrap;gap:8px">
+        ${!state.reporteDescargado ? `
+          <button class="btn btn-blue btn-sm" id="hist-dl-csv">${icon("download")} Descargar CSV primero</button>
+          <button class="btn btn-blue btn-sm" id="hist-dl-pdf">${icon("print")} Descargar PDF primero</button>` : ""}
+        <button class="btn ghost" id="hist-cancel">Cancelar</button>
+        <button class="btn btn-danger-outline" id="hist-confirm">${icon("trash")} Borrar historial</button>
+      </div>
+    </div>`;
+  $("#modal-root").appendChild(modal);
+  $("#hist-close").onclick = () => modal.remove();
+  $("#hist-cancel").onclick = () => modal.remove();
+  const btnDlCsv = $("#hist-dl-csv", modal);
+  const btnDlPdf = $("#hist-dl-pdf", modal);
+  if (btnDlCsv) btnDlCsv.onclick = async () => { await descargarCSV(dias); modal.remove(); setTimeout(() => abrirModalLimpiarHistorial(dias), 400); };
+  if (btnDlPdf) btnDlPdf.onclick = async () => { await descargarPDF(dias); modal.remove(); setTimeout(() => abrirModalLimpiarHistorial(dias), 400); };
+  $("#hist-confirm", modal).onclick = async () => {
+    const antesDe = $("#hist-fecha", modal).value;
+    if (!antesDe) return toast("Elige una fecha límite", "warn");
+    try {
+      const r = await api(`/reportes/historial?antes_de=${antesDe}`, "DELETE", {});
+      modal.remove();
+      toast(`Historial limpiado: ${r.eliminados} pedido(s) eliminado(s)`, "ok");
+      loadReportes(dias);
+    } catch (e) { toast("Error: " + e.message, "error"); }
+  };
+}
+
 function svgGrafica(data) {
   if (!data.length) return `<div style="color:var(--gris-400);font-size:13px;padding:20px 0">Sin datos en el rango</div>`;
   const W = 520, H = 200, padL = 46, padB = 26, padT = 12;

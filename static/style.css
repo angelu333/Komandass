@@ -540,3 +540,15 @@ table.data tr.inactivo td { opacity: .55; background: #f6f7f8; }
   border-color: var(--gris-400);
 }
 
+/* ============ REPORTES: ACCIONES (EXPORTAR / LIMPIAR HISTORIAL) ============ */
+.report-actions { border: 1.5px solid var(--gris-200); }
+.report-warn {
+  background: #fffbea; border: 1.5px solid #f59e0b; border-radius: 12px;
+  padding: 12px 14px; font-size: 13px; color: #78350f;
+  margin-bottom: 14px; line-height: 1.55;
+}
+.btn-danger-outline {
+  background: #fff; color: var(--rojo); border: 2px solid var(--rojo);
+  font-weight: 800;
+}
+.btn-danger-outline:hover { background: #fff7f7; }
